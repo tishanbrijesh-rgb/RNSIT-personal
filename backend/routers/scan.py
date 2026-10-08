@@ -55,11 +55,14 @@ async def _event_stream(request: Request, scan_id: int, max_events: int = 30) ->
                 "status": status,
                 "collector_stats": job.collector_stats or {},
                 "assets_found": job.assets_found,
+                "findings_count": (job.collector_stats or {}).get("_findings_count", job.assets_found),
                 "total_files": job.total_files,
                 "in_scope_files": job.in_scope_files,
                 "scanned_files": job.scanned_files,
                 "coverage_pct": job.coverage_pct,
                 "duration_ms": job.duration_ms,
+                "started_at": job.started_at.isoformat() if job.started_at else None,
+                "finished_at": job.finished_at.isoformat() if job.finished_at else None,
                 "blind_spots": list(job.blind_spots or []),
             })
             if payload != last_payload:

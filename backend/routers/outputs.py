@@ -359,7 +359,7 @@ def calibration_info() -> dict:
     }
 
 @router.get("/evidence-graph")
-def evidence_graph(scan_id: ScanId = None) -> dict:
+def evidence_graph(scan_id: ScanId = None, asset_id: int | None = Query(default=None, ge=1)) -> dict:
     db = SessionLocal()
     try:
         scan = _resolve_scan(db, scan_id)
@@ -368,7 +368,11 @@ def evidence_graph(scan_id: ScanId = None) -> dict:
             .filter(CryptoAssetDB.scan_job_id == scan.id)
             .order_by(CryptoAssetDB.id.asc())
         )
+        if asset_id is not None:
+            asset_query = asset_query.filter(CryptoAssetDB.id == asset_id)
         total_assets = asset_query.count()
+        if asset_id is not None and total_assets == 0:
+            raise HTTPException(404, detail="Asset not found in scan")
         assets = asset_query.limit(GRAPH_ASSET_LIMIT + 1).all()
         asset_limit_reached = len(assets) > GRAPH_ASSET_LIMIT
         assets = assets[:GRAPH_ASSET_LIMIT]

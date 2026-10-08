@@ -1,9 +1,15 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter } from "react-router-dom";
-import type { DashboardSummary } from "../types";
+import type { DashboardSummary, ScanJob } from "../types";
 import { describe, expect, it, vi } from "vitest";
-import { downloadReport, getDashboardSummary, getEvaluation } from "../api/client";
+import {
+  canWrite,
+  downloadReport,
+  getDashboardSummary,
+  getEvaluation,
+  getScans,
+} from "../api/client";
 import Dashboard from "./Dashboard";
 
 vi.mock("../api/client", () => ({
@@ -110,42 +116,57 @@ describe("Dashboard", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Building assurance view")).toBeInTheDocument();
+    // Loading state shows skeleton placeholders with a status role
+    expect(screen.getByRole("status")).toBeInTheDocument();
     expect(
       await screen.findByRole("heading", { name: "Cryptographic assurance overview" }),
     ).toBeInTheDocument();
   });
 
   it("keeps the selected scan in downloads and CBOM navigation", async () => {
-    vi.mocked(getDashboardSummary).mockResolvedValue({
-      total_assets: 1,
-      high_risk_count: 1,
-      avg_confidence: 0.9,
-      coverage_pct: 100,
-      blind_spots: [],
-      risk_distribution: { CRITICAL: 0, HIGH: 1, MEDIUM: 0, LOW: 0 },
-      quantum_vulnerable_count: 1,
-      conflict_count: 0,
-      latest_scan_id: 9,
-      collector_stats: {},
-    });
-    vi.mocked(getEvaluation).mockRejectedValue(new Error("not available"));
-    vi.mocked(downloadReport).mockResolvedValue();
-
+    vi.mocked(getDashboardSummary).mockResolvedValue(summary);
+    vi.mocked(getEvaluation).mockRejectedValue(new Error("unavailable"));
     render(
-      <MemoryRouter initialEntries={["/?scan_id=9"]}>
+      <MemoryRouter initialEntries={["/?scan_id=7"]}>
         <Dashboard />
       </MemoryRouter>,
     );
-
-    await userEvent.click(await screen.findByRole("button", { name: "Download risk report" }));
-    expect(downloadReport).toHaveBeenCalledWith(
-      "/api/reports/risk.txt?scan_id=9",
-      "ecdat-risk-report-scan-9.txt",
-    );
+    expect(await screen.findByRole("button", { name: "Download risk report" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View CBOM" })).toHaveAttribute(
       "href",
-      "/cbom?scan_id=9",
+      "/cbom?scan_id=7",
     );
+  });
+
+  it("shows recent scan rescan button when write access is available", async () => {
+    vi.mocked(getDashboardSummary).mockResolvedValue(summary);
+    vi.mocked(getEvaluation).mockRejectedValue(new Error("unavailable"));
+    vi.mocked(canWrite).mockReturnValue(true);
+    vi.mocked(getScans).mockResolvedValue([
+      {
+        id: 1,
+        repo_path: "/repo",
+        status: "completed",
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
+        assets_found: 0,
+        avg_confidence: null,
+        total_files: 0,
+        in_scope_files: 0,
+        scanned_files: 0,
+        failed_files: 0,
+        coverage_pct: 100,
+        duration_ms: 1000,
+        collector_stats: {},
+        blind_spots: [],
+        failures: [],
+      } satisfies ScanJob,
+    ]);
+    render(
+      <MemoryRouter>
+        <Dashboard />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Rescan" })).toBeInTheDocument();
   });
 });

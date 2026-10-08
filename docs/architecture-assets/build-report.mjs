@@ -104,7 +104,7 @@ const html = `<!doctype html>
   <h1>ECDAT Implemented Architecture</h1>
   <div class="subtitle">End to end frontend backend scanner data and deployment architecture</div>
   <dl>
-    <dt>Repository</dt><dd>ECDAT-SIH</dd>
+    <dt>Repository</dt><dd>ECDAT-ImpactX</dd>
     <dt>Snapshot</dt><dd>20 September 2026</dd>
     <dt>Application</dt><dd>Enterprise Cryptographic Discovery and Analysis Tool</dd>
     <dt>Coverage</dt><dd>Frontend, API, scanner, data model, security, deployment, operations, and verification</dd>

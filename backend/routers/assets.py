@@ -1,8 +1,10 @@
 """Assets router — list and retrieve crypto assets."""
-from typing import Literal
+import csv
+import io
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import or_
 
 from backend.db import SessionLocal
@@ -14,6 +16,83 @@ from backend.security import current_role, ensure_write_role, record_audit
 
 logger = get_logger("ecdat.assets")
 router = APIRouter(prefix="/api", tags=["assets"])
+
+CSV_COLUMNS = (
+    "id", "algorithm", "key_size", "category", "priority_label",
+    "priority_score", "confidence", "quantum_vulnerable", "location",
+    "usage", "library", "protocol", "evidence_kind", "pqc_candidate",
+)
+
+
+def _asset_query(db, scan_job_id, search, risk, quantum):
+    target_scan_id = scan_job_id
+    if target_scan_id is None:
+        latest = (db.query(ScanJobDB).filter(ScanJobDB.status == "completed")
+                  .order_by(ScanJobDB.id.desc()).first())
+        target_scan_id = latest.id if latest else None
+    q = db.query(CryptoAssetDB).filter(CryptoAssetDB.scan_job_id == target_scan_id)
+    if search_text := (search.strip() if search else ""):
+        escaped = search_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        q = q.filter(or_(
+            CryptoAssetDB.algorithm.ilike(pattern, escape="\\"),
+            CryptoAssetDB.category.ilike(pattern, escape="\\"),
+            CryptoAssetDB.location.ilike(pattern, escape="\\"),
+            CryptoAssetDB.library.ilike(pattern, escape="\\"),
+            CryptoAssetDB.protocol.ilike(pattern, escape="\\"),
+            CryptoAssetDB.usage.ilike(pattern, escape="\\"),
+        ))
+    if risk is not None:
+        q = q.filter(CryptoAssetDB.priority_label == risk)
+    if quantum is not None:
+        q = q.filter(CryptoAssetDB.quantum_vulnerable.is_(quantum))
+    return q
+
+
+def _sort_assets(q, sort):
+    if sort == "confidence":
+        return q.order_by(CryptoAssetDB.confidence.desc(), CryptoAssetDB.id.desc())
+    if sort == "algorithm":
+        return q.order_by(CryptoAssetDB.algorithm.asc(), CryptoAssetDB.id.desc())
+    return q.order_by(CryptoAssetDB.priority_score.desc(), CryptoAssetDB.id.desc())
+
+
+@router.get("/assets.csv")
+def export_assets(
+    scan_job_id: int | None = Query(default=None, ge=1),
+    search: str | None = Query(default=None, alias="q", min_length=1, max_length=200, pattern=r".*\S.*"),
+    risk: Literal["CRITICAL", "HIGH", "MEDIUM", "LOW"] | None = Query(default=None),
+    quantum: bool | None = Query(default=None),
+    sort: Literal["priority", "confidence", "algorithm"] = Query(default="priority"),
+    ids: Annotated[list[int] | None, Query()] = None,
+) -> StreamingResponse:
+    if ids is not None and not ids:
+        raise HTTPException(422, detail="Select at least one asset")
+
+    def rows():
+        output = io.StringIO(newline="")
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow(CSV_COLUMNS)
+        yield output.getvalue()
+        db = SessionLocal()
+        try:
+            q = _asset_query(db, scan_job_id, None if ids is not None else search,
+                             None if ids is not None else risk,
+                             None if ids is not None else quantum)
+            if ids is not None:
+                q = q.filter(CryptoAssetDB.id.in_(ids))
+            for asset in _sort_assets(q, sort).yield_per(250):
+                output.seek(0)
+                output.truncate(0)
+                writer.writerow([getattr(asset, column) for column in CSV_COLUMNS])
+                yield output.getvalue()
+        finally:
+            db.close()
+
+    return StreamingResponse(
+        rows(), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="ecdat-assets.csv"'},
+    )
 
 
 @router.get("/assets", response_model=list[AssetResponse])
@@ -35,45 +114,11 @@ def list_assets(
     """
     db = SessionLocal()
     try:
-        target_scan_id = scan_job_id
-        if target_scan_id is None:
-            latest = (
-                db.query(ScanJobDB)
-                .filter(ScanJobDB.status == "completed")
-                .order_by(ScanJobDB.id.desc())
-                .first()
-            )
-            target_scan_id = latest.id if latest else None
-        if target_scan_id is None:
-            logger.info("No completed scan available for asset listing")
-            return JSONResponse(content={"items": [], "total": 0}, headers={"X-Total-Count": "0"})
-        logger.info("Listing assets", extra={"extra_data": {"scan_id": target_scan_id, "offset": offset, "limit": limit}})
-        q = db.query(CryptoAssetDB).filter(CryptoAssetDB.scan_job_id == target_scan_id)
-        if search_text := (search.strip() if search else ""):
-            escaped = search_text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            pattern = f"%{escaped}%"
-            q = q.filter(or_(
-                CryptoAssetDB.algorithm.ilike(pattern, escape="\\"),
-                CryptoAssetDB.category.ilike(pattern, escape="\\"),
-                CryptoAssetDB.location.ilike(pattern, escape="\\"),
-                CryptoAssetDB.library.ilike(pattern, escape="\\"),
-                CryptoAssetDB.protocol.ilike(pattern, escape="\\"),
-                CryptoAssetDB.usage.ilike(pattern, escape="\\"),
-            ))
-        if risk is not None:
-            q = q.filter(CryptoAssetDB.priority_label == risk)
-        if quantum is not None:
-            q = q.filter(CryptoAssetDB.quantum_vulnerable.is_(quantum))
+        q = _asset_query(db, scan_job_id, search, risk, quantum)
         total = q.count()
         if offset >= total:
             return JSONResponse(content={"items": [], "total": total}, headers={"X-Total-Count": str(total)})
-        if sort == "confidence":
-            q = q.order_by(CryptoAssetDB.confidence.desc(), CryptoAssetDB.id.desc())
-        elif sort == "algorithm":
-            q = q.order_by(CryptoAssetDB.algorithm.asc(), CryptoAssetDB.id.desc())
-        else:
-            q = q.order_by(CryptoAssetDB.priority_score.desc(), CryptoAssetDB.id.desc())
-        q = q.offset(offset).limit(limit)
+        q = _sort_assets(q, sort).offset(offset).limit(limit)
         assets = q.all()
         validated = [AssetResponse.model_validate(a) for a in assets]
         items = [a.model_dump(mode="json") for a in validated]

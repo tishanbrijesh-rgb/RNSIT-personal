@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the authenticated SIH judge path without exposing credentials."""
+"""Exercise the authenticated ImpactX judge path without exposing credentials."""
 
 from __future__ import annotations
 

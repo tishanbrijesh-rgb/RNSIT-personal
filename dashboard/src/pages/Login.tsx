@@ -1,6 +1,5 @@
-// Login page with clean framer-motion entrance and floating labels.
+// Login page — ECDAT design system.
 import { useEffect, useId, useState, type FormEvent } from "react";
-import { motion, AnimatePresence } from "framer-motion";
 import { ApiError, login } from "../api/client";
 
 export default function Login({
@@ -14,6 +13,17 @@ export default function Login({
   const [password, setPassword] = useState("");
   const [error, setError] = useState(message);
   const [busy, setBusy] = useState(false);
+
+  // Login page must always render in light mode — cryptographic assurance identity
+  useEffect(() => {
+    const root = document.documentElement;
+    const prev = root.getAttribute("data-theme");
+    root.setAttribute("data-theme", "light");
+    return () => {
+      if (prev === null) root.removeAttribute("data-theme");
+      else root.setAttribute("data-theme", prev);
+    };
+  }, []);
 
   useEffect(() => setError(message), [message]);
 
@@ -43,122 +53,86 @@ export default function Login({
         Skip to main content
       </a>
       <main className="login-shell" id="main-content" tabIndex={-1}>
-        <aside className="login-context" aria-label="ECDAT capabilities">
-          <div className="login-context-copy">
-            <p className="eyebrow">Evidence before assumptions</p>
-            <h2>Know where cryptography lives before it becomes urgent.</h2>
+        <aside className="login-context" aria-label="About ECDAT">
+          <div className="login-identity">
+            <img className="brand-mark" src="/ecdat-logo.svg" alt="" aria-hidden="true" />
+            <div>
+              <div className="login-identity-name">ECDAT</div>
+              <div className="login-identity-subtitle">Discovery Assurance</div>
+            </div>
+          </div>
+          <div className="login-panel-body">
+            <p className="login-context-title">
+              Enterprise Cryptographic Discovery &amp; Analysis Tool
+            </p>
             <p>
               Correlate source, dependency, certificate, and rule evidence into an inventory your
               security team can defend.
             </p>
           </div>
-          <dl className="login-signals">
-            <div>
-              <dt>4</dt>
-              <dd>independent collectors</dd>
-            </div>
-            <div>
-              <dt>Local</dt>
-              <dd>repository analysis</dd>
-            </div>
-            <div>
-              <dt>CBOM</dt>
-              <dd>export-ready evidence</dd>
-            </div>
-          </dl>
         </aside>
-        <motion.div
-          className="login-card"
-          aria-labelledby="login-heading"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-        >
-          <div className="login-brand">
-            <img className="brand-mark" src="/ecdat-logo.svg" alt="" aria-hidden="true" />
-            <div>
-              <div className="brand-text">ECDAT</div>
-              <div className="brand-sub">Discovery Assurance</div>
+        <section className="login-panel--form" aria-labelledby="login-heading">
+          <div className="login-card">
+            <h1 id="login-heading" className="login-card-title">
+              Sign in
+            </h1>
+            <p className="login-card-desc">
+              Authenticated access to the cryptographic inventory and discovery-assurance console.
+            </p>
+
+            {error && (
+              <div className="login-error" id="login-error" role="alert">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={submit} aria-busy={busy} className="login-form">
+              <LoginField
+                label="Username"
+                value={username}
+                onChange={setUsername}
+                autoComplete="username"
+                invalid={Boolean(error)}
+                describedBy={error ? "login-error" : undefined}
+              />
+
+              <LoginField
+                label="Password"
+                value={password}
+                onChange={setPassword}
+                type="password"
+                autoComplete="current-password"
+                invalid={Boolean(error)}
+                describedBy={error ? "login-error" : undefined}
+              />
+
+              <button
+                type="submit"
+                className="button wide login-submit"
+                disabled={busy || !username || !password}
+              >
+                {busy && <span className="spinner login-spinner" aria-hidden="true" />}
+                {busy ? "Signing in…" : "Sign in"}
+              </button>
+            </form>
+
+            <div className="login-hint" role="note">
+              <strong>Administrator-provisioned access</strong>
+              <span>Use your configured account. There are no default passwords.</span>
             </div>
           </div>
-
-          <h1 id="login-heading">Sign in</h1>
-          <p>
-            Authenticated access to the cryptographic inventory and discovery-assurance console.
-          </p>
-          <div className="login-system-status">
-            <span className="login-system-dot" aria-hidden="true" />
-            <span>All systems operational</span>
-          </div>
-
-          <AnimatePresence>
-            {error && (
-              <motion.div
-                className="login-error"
-                id="login-error"
-                role="alert"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                {error}
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <form onSubmit={submit} aria-busy={busy}>
-            <FloatingLabel
-              label="Username"
-              value={username}
-              onChange={setUsername}
-              autoComplete="username"
-              autoFocus
-              invalid={Boolean(error)}
-              describedBy={error ? "login-error" : undefined}
-            />
-
-            <FloatingLabel
-              label="Password"
-              value={password}
-              onChange={setPassword}
-              type="password"
-              autoComplete="current-password"
-              invalid={Boolean(error)}
-              describedBy={error ? "login-error" : undefined}
-            />
-
-            <button
-              type="submit"
-              className="button wide login-submit"
-              disabled={busy || !username || !password}
-            >
-              {busy && <span className="spinner login-spinner" aria-hidden="true" />}
-              {busy ? "Signing in…" : "Sign in"}
-            </button>
-          </form>
-
-          <div className="login-hint">
-            <strong>Administrator-provisioned access</strong>
-            <br />
-            Use your configured account. There are no default passwords.
-          </div>
-        </motion.div>
-
-        <div className="login-footer">
-          ECDAT &middot; SIH26164 &middot; Authenticated local access
-        </div>
+        </section>
       </main>
     </>
   );
 }
 
-function FloatingLabel({
+function LoginField({
   label,
   value,
   onChange,
   type = "text",
   autoComplete,
-  autoFocus = false,
   invalid = false,
   describedBy,
 }: {
@@ -167,15 +141,13 @@ function FloatingLabel({
   onChange: (v: string) => void;
   type?: string;
   autoComplete?: string;
-  autoFocus?: boolean;
   invalid?: boolean;
   describedBy?: string;
 }) {
-  const active = value.length > 0;
   const inputId = useId();
 
   return (
-    <div className={`float-field ${active ? "float-field--active" : ""}`}>
+    <div className="float-field">
       <label htmlFor={inputId}>{label}</label>
       <input
         id={inputId}
@@ -183,14 +155,12 @@ function FloatingLabel({
         type={type}
         value={value}
         autoComplete={autoComplete}
-        autoFocus={autoFocus}
         aria-invalid={invalid}
         aria-describedby={describedBy}
         required
         placeholder=" "
         onChange={(e) => onChange(e.target.value)}
       />
-      <div className="float-underline" />
     </div>
   );
 }

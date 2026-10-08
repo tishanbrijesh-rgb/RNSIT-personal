@@ -20,7 +20,6 @@
 @import "./styles/pages.css";
 
 /* ── Feature-specific overrides (load after pages) ──── */
-@import "./styles/auth.css"; /* Login page */
 @import "./styles/scan-detail.css"; /* Scan detail micro-interactions */
 @import "./styles/scan-new.css"; /* New scan three-step workflow */
 @import "./styles/cbom.css"; /* CBOM page styles */
@@ -30,6 +29,7 @@
 @import "./styles/responsive.css"; /* Breakpoint overrides (keep last for specificity) */
 @import "./styles/utilities.css"; /* Focus, tone, and one-off utility classes */
 @import "./styles/workspace.css"; /* Unified assurance workspace — final visual authority */
+@import "./styles/auth.css"; /* Scoped login layout after shared workspace rules */
 
 /* ═══════════════════════════════════════════════════════════════════
    Print Styles — reports and dashboards

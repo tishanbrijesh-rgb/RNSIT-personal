@@ -16,7 +16,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load .env from project root (ECDAT-SIH/.env) before any module reads os.environ.
+# Load .env from project root (ECDAT-ImpactX/.env) before any module reads os.environ.
 _project_root = Path(__file__).resolve().parent.parent
 load_dotenv(_project_root / ".env", override=False)
 
@@ -306,12 +306,30 @@ async def lifespan(_app: FastAPI):
     except Exception:
         logger.exception("Startup lease reconciliation failed")
 
-    yield
+    async def scan_watchdog():
+        from backend.services.scan_control import reconcile_abandoned_scans
+
+        while True:
+            try:
+                await asyncio.to_thread(reconcile_abandoned_scans)
+            except Exception:
+                logger.exception("Scan watchdog reconciliation failed")
+            await asyncio.sleep(10)
+
+    watchdog = asyncio.create_task(scan_watchdog())
+    try:
+        yield
+    finally:
+        watchdog.cancel()
+        try:
+            await watchdog
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(
     title="ECDAT",
-    description="Enterprise Cryptographic Discovery & Analysis Tool — Smart India Hackathon 2026",
+    description="Enterprise Cryptographic Discovery & Analysis Tool — ImpactX 2026",
     version="1.0.0",
     lifespan=lifespan,
 )

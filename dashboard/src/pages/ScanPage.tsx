@@ -1,5 +1,5 @@
 // New Scan - focused one-screen repository workflow.
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   scanRepo,
@@ -11,6 +11,8 @@ import {
 } from "../api/client";
 
 const ACTIVE_SCAN_STATUSES = new Set(["started", "queued", "pending", "initialising", "running"]);
+const TERMINAL_SCAN_STATUSES = new Set(["completed", "failed", "cancelled", "timed_out"]);
+const ACTIVE_SCAN_KEY = "ecdat.activeScanId";
 
 export const isActiveScanStatus = (status: string) => ACTIVE_SCAN_STATUSES.has(status);
 export const shouldPollScanStatus = (status: string) => isActiveScanStatus(status);
@@ -23,6 +25,8 @@ export const progressDisplay = (event: ScanProgressEvent) => {
       phase: activityPhase,
       files: typeof stats._files_discovered === "number" ? stats._files_discovered : 0,
       label: "Files discovered",
+      total: undefined,
+      progressPercent: undefined,
     };
   }
   const processed = typeof stats._files_processed === "number" ? stats._files_processed : undefined;
@@ -30,13 +34,23 @@ export const progressDisplay = (event: ScanProgressEvent) => {
     typeof stats._files_supported === "number" ? stats._files_supported : event.in_scope_files;
   const progressPercent =
     typeof processed === "number" && typeof supported === "number" && supported > 0
-      ? Math.round((processed / supported) * 10000) / 100
+      ? event.status === "completed"
+        ? 100
+        : processed < supported
+          ? Math.round((processed / supported) * 10000) / 100
+          : undefined
       : undefined;
   return {
     phase: activityPhase,
-    files: processed ?? event.scanned_files ?? event.in_scope_files ?? 0,
+    files: processed ?? event.scanned_files ?? 0,
     label: "Files processed",
+    total: typeof supported === "number" && supported > 0 ? supported : undefined,
     progressPercent,
+    processingComplete:
+      typeof processed === "number" &&
+      typeof supported === "number" &&
+      supported > 0 &&
+      processed >= supported,
   };
 };
 
@@ -47,26 +61,31 @@ const formatDuration = (ms: number) => {
   return `${m}m ${s}s`;
 };
 
+const serverTime = (value: string) =>
+  Date.parse(/[zZ]|[+-]\d\d:\d\d$/.test(value) ? value : `${value}Z`);
+
 export default function ScanPage() {
   const [repoPath, setRepoPath] = useState("");
   const [pathError, setPathError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [createError, setCreateError] = useState("");
   const [startError, setStartError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
   const [scan, setScan] = useState<{ scan_id: number; status: string } | null>(null);
   const [phase, setPhase] = useState<string>("pending");
   const [activityPhase, setActivityPhase] = useState<string>("pending");
   const [filesLabel, setFilesLabel] = useState("Files processed");
   const [filesProcessed, setFilesProcessed] = useState(0);
+  const [filesTotal, setFilesTotal] = useState<number | undefined>();
   const [findingsCount, setFindingsCount] = useState(0);
-  const [coverage, setCoverage] = useState<string>("");
   const [coveragePercent, setCoveragePercent] = useState<number | null>(null);
+  const [processingComplete, setProcessingComplete] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [startedAt, setStartedAt] = useState<string | null>(null);
+  const scanStartRef = useRef<string | null>(null);
   const [blindSpots, setBlindSpots] = useState<string[]>([]);
   const navigate = useNavigate();
   const repoInputId = useId();
-  const eventSourceRef = useRef<(() => void) | null>(null);
-  const elapsedInterval = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [scans, setScans] = useState<import("../types").ScanJob[]>([]);
   useEffect(() => {
@@ -76,12 +95,137 @@ export default function ScanPage() {
   }, []);
 
   useEffect(() => {
-    return () => {
-      eventSourceRef.current?.();
-      eventSourceRef.current = null;
-      if (elapsedInterval.current) clearInterval(elapsedInterval.current);
-    };
+    const saved = sessionStorage.getItem(ACTIVE_SCAN_KEY);
+    const id = Number(saved);
+    if (saved && Number.isSafeInteger(id) && id > 0) setScan({ scan_id: id, status: "pending" });
   }, []);
+
+  const applyTiming = useCallback(
+    (event: Pick<ScanProgressEvent, "status" | "started_at" | "finished_at">) => {
+      if (!event.started_at || event.status === "pending" || event.status === "queued")
+        return false;
+      if (!Number.isFinite(serverTime(event.started_at))) return false;
+      if (!scanStartRef.current) {
+        scanStartRef.current = event.started_at;
+        setStartedAt(event.started_at);
+      }
+      const end = event.finished_at ? serverTime(event.finished_at) : Date.now();
+      setElapsed(Math.max(0, end - serverTime(scanStartRef.current)));
+      return true;
+    },
+    [],
+  );
+
+  const applyProgress = useCallback(
+    (event: ScanProgressEvent) => {
+      setPhase(event.status);
+      const display = progressDisplay(event);
+      setActivityPhase(display.phase);
+      setFilesProcessed(display.files);
+      setFilesLabel(display.label);
+      setFilesTotal(display.total);
+      setFindingsCount(event.findings_count ?? event.assets_found ?? 0);
+      setProcessingComplete(display.processingComplete ?? false);
+      if (event.status === "completed") setCoveragePercent(100);
+      else if (!display.processingComplete) setCoveragePercent(display.progressPercent ?? null);
+      applyTiming(event);
+      if (event.blind_spots) setBlindSpots(event.blind_spots);
+      if (TERMINAL_SCAN_STATUSES.has(event.status)) sessionStorage.removeItem(ACTIVE_SCAN_KEY);
+      if (TERMINAL_SCAN_STATUSES.has(event.status)) setCancelling(false);
+    },
+    [applyTiming],
+  );
+
+  useEffect(() => {
+    if (!scan) return;
+    let active = true;
+    let sawEvent = false;
+    let sawRunningEvent = false;
+    let clockResolved = Boolean(scanStartRef.current);
+    let loading = false;
+    let poll: ReturnType<typeof setInterval> | undefined;
+    let clockRetry: ReturnType<typeof setTimeout> | undefined;
+    const retryClock = () => {
+      if (!active || clockResolved || clockRetry || !sawRunningEvent) return;
+      clockRetry = setTimeout(() => {
+        clockRetry = undefined;
+        void load();
+      }, 1000);
+    };
+    const load = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const job = await getScan(scan.scan_id);
+        if (!active) return;
+        setRepoPath(job.repo_path);
+        clockResolved = applyTiming(job) || clockResolved;
+        if (!sawEvent || poll || TERMINAL_SCAN_STATUSES.has(job.status)) {
+          applyProgress({ ...job, scan_id: job.id });
+        }
+        if (TERMINAL_SCAN_STATUSES.has(job.status)) {
+          sawRunningEvent = false;
+          if (clockRetry) clearTimeout(clockRetry);
+          clockRetry = undefined;
+          stopEvents();
+          if (poll) clearInterval(poll);
+          poll = undefined;
+        }
+      } catch (error) {
+        if (active)
+          setStartError(error instanceof Error ? error.message : "Unable to load scan state");
+      } finally {
+        loading = false;
+        retryClock();
+      }
+    };
+    const startPolling = () => {
+      if (!active || poll) return;
+      void load();
+      poll = setInterval(() => void load(), 1000);
+    };
+    const stopEvents = subscribeScanEvents(
+      scan.scan_id,
+      (event) => {
+        if (active) {
+          sawEvent = true;
+          sawRunningEvent = event.status === "running";
+          applyProgress(event);
+          clockResolved = Boolean(scanStartRef.current);
+          if (event.status === "running" && !clockResolved) void load();
+        }
+      },
+      (event) => {
+        if (active) {
+          sawRunningEvent = false;
+          applyProgress(event);
+          if (!event.started_at || !event.finished_at) {
+            void getScan(scan.scan_id)
+              .then((job) => {
+                if (active) applyProgress({ ...job, scan_id: job.id });
+              })
+              .catch(() => {});
+          }
+        }
+      },
+      () => startPolling(),
+    );
+    void load();
+    return () => {
+      active = false;
+      stopEvents();
+      if (poll) clearInterval(poll);
+      if (clockRetry) clearTimeout(clockRetry);
+    };
+  }, [scan?.scan_id, applyProgress, applyTiming]);
+
+  useEffect(() => {
+    if (!startedAt || phase !== "running") return;
+    const start = serverTime(startedAt);
+    if (!Number.isFinite(start)) return;
+    const timer = setInterval(() => setElapsed(Math.max(0, Date.now() - start)), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt, phase]);
 
   const recentPaths = useMemo(() => {
     if (!scans.length) return [];
@@ -109,44 +253,20 @@ export default function ScanPage() {
     setCreateError("");
     try {
       const result = await scanRepo(repoPath.trim());
+      sessionStorage.setItem(ACTIVE_SCAN_KEY, String(result.scan_id));
       setScan(result);
       setPhase(result.status);
       setActivityPhase(result.status);
       setFilesProcessed(0);
+      setFilesTotal(undefined);
       setFindingsCount(0);
-      setCoverage("");
       setCoveragePercent(null);
+      setProcessingComplete(false);
       setElapsed(0);
+      setStartedAt(null);
+      scanStartRef.current = null;
       setStartError(null);
-      eventSourceRef.current = subscribeScanEvents(
-        result.scan_id,
-        (event: ScanProgressEvent) => {
-          if (event.status) setPhase(event.status);
-          const display = progressDisplay(event);
-          setActivityPhase(display.phase);
-          setFilesProcessed(display.files);
-          setFilesLabel(display.label);
-          if (display.progressPercent !== undefined) {
-            setCoveragePercent(Math.min(display.progressPercent, 100));
-          }
-          if (event.assets_found) setFindingsCount(event.assets_found);
-          if (event.coverage_pct !== undefined) {
-            setCoveragePercent(Math.min(event.coverage_pct, 100));
-            setCoverage(`${Math.min(event.coverage_pct, 100)}%`);
-          }
-          if (event.duration_ms) setElapsed(event.duration_ms);
-          if (event.blind_spots) setBlindSpots(event.blind_spots);
-        },
-        (final) => {
-          if (final.status) setPhase(final.status);
-        },
-        (err) => {
-          console.error("Scan event stream error:", err);
-        },
-      );
-      elapsedInterval.current = setInterval(() => {
-        setElapsed((prev) => prev + 1000);
-      }, 1000);
+      setCancelling(false);
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : "Failed to start scan. Try again.");
     } finally {
@@ -157,57 +277,16 @@ export default function ScanPage() {
   const handleCancel = async () => {
     if (!scan) return;
     try {
+      setCancelling(true);
       await cancelScan(scan.scan_id);
-      eventSourceRef.current?.();
-      eventSourceRef.current = null;
-      if (elapsedInterval.current) clearInterval(elapsedInterval.current);
-    } catch {
-      /* best-effort */
+    } catch (error) {
+      setCancelling(false);
+      setStartError(error instanceof Error ? error.message : "Unable to cancel scan");
     }
   };
 
   useEffect(() => {
-    if (!scan) return;
-    if (!shouldPollScanStatus(phase)) return;
-    const refresh = async () => {
-      try {
-        const s = await getScan(scan.scan_id);
-        setPhase(s.status);
-        const display = progressDisplay({
-          scan_id: s.id,
-          status: s.status,
-          collector_stats: s.collector_stats ?? {},
-          assets_found: s.assets_found,
-          coverage_pct: s.coverage_pct,
-          duration_ms: s.duration_ms,
-          in_scope_files: s.in_scope_files,
-          scanned_files: s.scanned_files,
-        });
-        setActivityPhase(display.phase);
-        setFilesProcessed(display.files);
-        setFilesLabel(display.label);
-        if (display.progressPercent !== undefined) {
-          setCoveragePercent(Math.min(display.progressPercent, 100));
-        }
-        if (s.assets_found !== undefined) setFindingsCount(s.assets_found);
-        if (s.coverage_pct !== undefined && s.coverage_pct !== null) {
-          const nextCoverage = Math.min(s.coverage_pct, 100);
-          setCoveragePercent(nextCoverage);
-          setCoverage(`${nextCoverage}%`);
-        }
-        if (s.duration_ms) setElapsed(s.duration_ms);
-        if (s.blind_spots) setBlindSpots(s.blind_spots);
-      } catch {
-        /* SSE may still recover; retry on the next bounded interval. */
-      }
-    };
-    void refresh();
-    const poll = setInterval(() => void refresh(), 1000);
-    return () => clearInterval(poll);
-  }, [scan, phase]);
-
-  useEffect(() => {
-    if (scan && (phase === "completed" || phase === "failed" || phase === "cancelled")) {
+    if (scan && TERMINAL_SCAN_STATUSES.has(phase)) {
       const t = setTimeout(() => navigate(`/scans/${scan.scan_id}`), 3000);
       return () => clearTimeout(t);
     }
@@ -215,7 +294,7 @@ export default function ScanPage() {
 
   const isScanning = scan && isActiveScanStatus(phase);
 
-  if (scan && (phase === "completed" || phase === "failed" || phase === "cancelled")) {
+  if (scan && TERMINAL_SCAN_STATUSES.has(phase)) {
     const isComplete = phase === "completed";
     return (
       <div className="scan-completed">
@@ -247,7 +326,13 @@ export default function ScanPage() {
           )}
         </div>
         <h2>
-          {isComplete ? "Scan completed" : phase === "cancelled" ? "Scan cancelled" : "Scan failed"}
+          {isComplete
+            ? "Scan completed"
+            : phase === "cancelled"
+              ? "Scan cancelled"
+              : phase === "timed_out"
+                ? "Scan timed out"
+                : "Scan failed"}
         </h2>
         <p>
           {isComplete
@@ -256,6 +341,18 @@ export default function ScanPage() {
               ? "The scan was cancelled."
               : startError || "An unexpected error occurred."}
         </p>
+        {isComplete && (
+          <div
+            className="scan-progress"
+            role="progressbar"
+            aria-valuenow={100}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="File processing progress"
+          >
+            <div className="scan-progress-bar" style={{ width: "100%" }} />
+          </div>
+        )}
         <div className="scan-completed-actions">
           <Link className="button primary" to={`/scans/${scan.scan_id}`}>
             {isComplete ? "View results" : "View details"}
@@ -292,10 +389,10 @@ export default function ScanPage() {
         <div
           className="scan-progress"
           role="progressbar"
-          aria-valuenow={coveragePercent ?? 0}
+          aria-valuenow={processingComplete ? undefined : (coveragePercent ?? undefined)}
           aria-valuemin={0}
           aria-valuemax={100}
-          aria-label="Scan coverage"
+          aria-label="File processing progress"
         >
           <div className="scan-progress-bar" style={{ width: `${coveragePercent ?? 0}%` }} />
         </div>
@@ -305,7 +402,10 @@ export default function ScanPage() {
             <span className="scan-stat-label">Phase</span>
           </div>
           <div>
-            <span className="scan-stat-value">{filesProcessed.toLocaleString()}</span>
+            <span className="scan-stat-value">
+              {filesProcessed.toLocaleString()}
+              {filesTotal !== undefined ? ` / ${filesTotal.toLocaleString()}` : ""}
+            </span>
             <span className="scan-stat-label">{filesLabel}</span>
           </div>
           <div>
@@ -314,11 +414,20 @@ export default function ScanPage() {
           </div>
           <div>
             <span className="scan-stat-value">
-              {coverage || (coveragePercent !== null ? `${coveragePercent}%` : "—")}
+              {processingComplete
+                ? "Finalising"
+                : coveragePercent !== null
+                  ? `${coveragePercent}%`
+                  : "Determining scope"}
             </span>
             <span className="scan-stat-label">Live scan progress</span>
           </div>
         </div>
+        {startError && (
+          <p className="scan-input-error" role="alert">
+            {startError}
+          </p>
+        )}
         {blindSpots.length > 0 && (
           <div className="scan-blind-spots" role="note" aria-label="Declared blind spots">
             <strong>Declared blind spots:</strong>
@@ -329,8 +438,8 @@ export default function ScanPage() {
             </ul>
           </div>
         )}
-        <button className="button ghost" onClick={handleCancel}>
-          Cancel scan
+        <button className="button ghost" onClick={handleCancel} disabled={cancelling}>
+          {cancelling ? "Cancelling…" : "Cancel scan"}
         </button>
       </div>
     );

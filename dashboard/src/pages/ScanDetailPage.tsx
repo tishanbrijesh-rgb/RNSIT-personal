@@ -1,9 +1,18 @@
 // Scan detail — full job metrics, evidence summary, asset breakdown.
 import { useState, useEffect, useMemo } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
-import { getScanDetail, downloadCsv, subscribeScanEvents, getScans } from "../api/client";
+import {
+  getScanDetail,
+  downloadCsv,
+  subscribeScanEvents,
+  getScans,
+  scanRepo,
+  canWrite,
+} from "../api/client";
 import { RiskBadge } from "../components/RiskBadge";
+import { SkeletonPanel, SkeletonTable } from "../components/Skeletons";
+import { useToast } from "../components/Toast";
 import { formatDate } from "../utils/format";
 import type { ScanDetail } from "../types";
 
@@ -86,10 +95,13 @@ const FAILURE_LABELS: Record<string, string> = {
 };
 
 export default function ScanDetailPage() {
+  const navigate = useNavigate();
   const { id } = useParams();
+  const { toast } = useToast();
   const [detail, setDetail] = useState<ScanDetail | null>(null);
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [rescanning, setRescanning] = useState(false);
 
   const [assetRiskFilter, setAssetRiskFilter] = useState<AssetRiskFilter>("all");
   const [previousScans, setPreviousScans] = useState<ScanDetail[]>([]);
@@ -188,7 +200,10 @@ export default function ScanDetailPage() {
         );
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) {
+          setError(String(e));
+          toast("Failed to load scan: " + String(e), "error");
+        }
       });
 
     return () => {
@@ -230,6 +245,19 @@ export default function ScanDetailPage() {
     });
   }, [detail?.assets, assetRiskFilter]);
 
+  const handleRescan = async () => {
+    if (!detail || !canWrite()) return;
+    setRescanning(true);
+    try {
+      const result = await scanRepo(detail.repo_path);
+      toast("Rescan started", "success");
+      navigate("/scans/" + result.scan_id);
+    } catch (e) {
+      toast("Rescan failed: " + String(e), "error");
+      setRescanning(false);
+    }
+  };
+
   const handleExport = async () => {
     if (!detail) return;
     setExporting(true);
@@ -257,25 +285,36 @@ export default function ScanDetailPage() {
         "sources",
       ];
       await downloadCsv(`scan-${detail.id}-assets.csv`, rows, columns);
-    } catch {
+      toast("CSV exported successfully", "success");
+    } catch (e) {
       setError("Failed to export CSV.");
+      toast("Export failed: " + String(e), "error");
     } finally {
       setExporting(false);
     }
   };
 
-  if (error)
+  if (error && !detail)
     return (
-      <div className="callout error" role="alert">
-        {error}
+      <div className="state" role="alert">
+        <span className="spinner" aria-hidden="true" />
+        <h1>Scan detail unavailable</h1>
+        <p>{error}</p>
       </div>
     );
   if (!detail) {
     return (
-      <div className="state">
-        <span className="spinner" />
-        <h1>Loading scan detail</h1>
-        <p>Fetching scan job and asset results…</p>
+      <div className="scan-detail-page" role="status" aria-live="polite">
+        <SkeletonPanel />
+        <div style={{ display: "flex", gap: 12 }}>
+          <SkeletonPanel />
+          <SkeletonPanel />
+          <SkeletonPanel />
+          <SkeletonPanel />
+          <SkeletonPanel />
+          <SkeletonPanel />
+        </div>
+        <SkeletonTable rows={8} />
       </div>
     );
   }
@@ -299,6 +338,11 @@ export default function ScanDetailPage() {
               {exporting ? "Exporting…" : "Export displayed CSV"}
             </button>
           )}
+          {canWrite() && (
+            <button className="button secondary" disabled={rescanning} onClick={handleRescan}>
+              {rescanning ? "Rescanning…" : "Rescan"}
+            </button>
+          )}
           <Link className="button" to={`/assets?scan_id=${detail.id}`}>
             View all assets
           </Link>
@@ -311,7 +355,7 @@ export default function ScanDetailPage() {
             label="Assets found"
             value={detail.assets_found}
             trend={trends?.assets}
-            filter="critical"
+            filter="all"
             scanId={id ? Number(id) : undefined}
           />
         </div>
@@ -340,14 +384,13 @@ export default function ScanDetailPage() {
             label="Conflicts"
             value={detail.summary.conflict_count}
             trend={trends?.conflicts}
-            filter="conflict"
             tone="red"
             scanId={id ? Number(id) : undefined}
           />
         </div>
         <div>
           <StatWithTrend
-            label="Quantum exposed"
+            label="Quantum-vulnerable assets"
             value={detail.summary.quantum_vulnerable_count}
             trend={trends?.quantum}
             filter="quantum"
@@ -547,12 +590,6 @@ export default function ScanDetailPage() {
 }
 
 function TrendArrow({ value }: { value: number }) {
-  if (value === 0)
-    return (
-      <span className="trend-arrow trend-stable" aria-label="stable">
-        −
-      </span>
-    );
   const isUp = value > 0;
   const cls = isUp ? "trend-up" : "trend-down";
   const arrow = isUp ? "▲" : "▼";
@@ -591,7 +628,7 @@ function StatWithTrend({
       <span>{label}</span>
       <div className="stat-value-row">
         <strong>{typeof value === "number" && suffix === "%" ? `${value}%` : value}</strong>
-        {trend !== undefined && <TrendArrow value={trend} />}
+        {trend !== undefined && trend !== 0 && <TrendArrow value={trend} />}
       </div>
       {trendAbs !== undefined && trendAbs > 0 && (
         <span className="stat-trend-detail">
@@ -606,7 +643,7 @@ function StatWithTrend({
   if (filter) {
     return (
       <Link
-        to={`/assets?scan_id=${scanId ?? ""}&risk=${filter === "quantum" ? "ALL" : filter}`}
+        to={`/assets?scan_id=${scanId ?? ""}${filter === "quantum" ? "&quantum=1" : ""}`}
         className={`stat tone-${tone || "blue"} stat--clickable`}
       >
         {inner}

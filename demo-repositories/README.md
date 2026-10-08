@@ -1,4 +1,4 @@
-# ECDAT SIH demonstration repositories
+# ECDAT ImpactX demonstration repositories
 
 These fixtures make the expected outcome explicit before a judge-facing scan. They are intentionally small, deterministic, and safe: the code is evidence for static analysis and is not executed.
 

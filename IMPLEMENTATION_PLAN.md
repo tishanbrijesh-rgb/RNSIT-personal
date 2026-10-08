@@ -1,4 +1,4 @@
-# ECDAT-SIH — Comprehensive Implementation Plan
+# ECDAT-ImpactX — Comprehensive Implementation Plan
 
 > Last updated: 2026-09-12
 > Status: Scanning bug fixed and verified. Frontend tests pass (23/23). TypeScript compiles clean.

@@ -72,6 +72,12 @@ def run_scan(repo_path: str, scan_id: int | None = None) -> dict[str, Any]:
             db.commit()
             db.refresh(job)
             scan_id = job.id
+    with SessionLocal() as db:
+        job = db.get(ScanJobDB, scan_id)
+        if job is not None and job.status in {"pending", "queued"}:
+            job.started_at = datetime.now(timezone.utc)
+            job.status = "running"
+            db.commit()
     try:
         return _run_scan(repo_path, scan_id)
     except Exception as exc:
@@ -92,8 +98,19 @@ def collect_scan_result(
 ) -> dict[str, Any]:
     """Run repository-controlled parsing without touching the control-plane DB."""
     evidence, metrics = scan_with_metrics(repo_path, progress_callback=progress_callback)
+    if progress_callback is not None:
+        progress_callback({**metrics["collector_stats"], "_phase": "correlating",
+                           "_files_discovered": metrics["total_files"],
+                           "_files_supported": metrics["in_scope_files"],
+                           "_files_processed": metrics["in_scope_files"]})
     correlator_version = os.getenv("ECDAT_CORRELATOR_VERSION", "v2")
     findings = correlate_v3(evidence) if correlator_version == "v3" else correlate(evidence)
+    if progress_callback is not None:
+        progress_callback({**metrics["collector_stats"], "_phase": "persisting",
+                           "_files_discovered": metrics["total_files"],
+                           "_files_supported": metrics["in_scope_files"],
+                           "_files_processed": metrics["in_scope_files"],
+                           "_findings_count": len(findings)})
     logger.info(
         "Correlation complete",
         extra={"extra_data": {
@@ -226,7 +243,13 @@ def persist_scan_result(
         job.scanned_files = int(metrics.get("scanned_files", 0))
         job.failed_files = int(metrics.get("failed_files", 0))
         job.coverage_pct = float(metrics.get("coverage_pct", 0.0))
-        job.duration_ms = int(metrics.get("duration_ms", 0))
+        if job.started_at is not None:
+            started = job.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            job.duration_ms = max(0, round((job.finished_at - started).total_seconds() * 1000))
+        else:
+            job.duration_ms = int(metrics.get("duration_ms", 0))
         job.collector_stats = metrics.get("collector_stats", {})
         job.blind_spots = list(metrics.get("blind_spots", []))
         for failure in metrics.get("failures", []):

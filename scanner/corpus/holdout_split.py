@@ -23,7 +23,7 @@ os.makedirs(HOLDOUT_DIR, exist_ok=True)
 
 TRAIN_FRACTION = 0.70
 HOLDOUT_FRACTION = 0.30
-SEED = 26164  # SIH fixed seed for reproducibility
+SEED = 26164  # ImpactX fixed seed for reproducibility
 
 
 def stratified_split(entries, train_frac, rng):

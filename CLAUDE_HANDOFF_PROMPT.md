@@ -2,7 +2,7 @@
 
 Copy everything below into Claude while its working directory is:
 
-`C:\Users\Tishan Kumar B\Desktop\SIH\ECDAT-SIH`
+`C:\Users\Tishan Kumar B\Desktop\ImpactX\ECDAT-ImpactX`
 
 ---
 
@@ -27,7 +27,7 @@ Before changing code, read these files completely:
 
 1. `docs/accuracy-design-improvement-plan-2026-09-11.md`
 2. `MEMORY.md`
-3. `ecdat-sih-project-knowledge.md`
+3. `ecdat-impactx-project-knowledge.md`
 4. `docs/verification-2026-09-10.md`
 5. `docs/discovery-accuracy-audit.md`
 6. `docs/operation-correlation.md`

@@ -38,7 +38,7 @@ export const ConfirmDialog = memo(function ConfirmDialog({
       return;
     }
     previousFocusRef.current = document.activeElement as HTMLElement | null;
-    const focusFrame = window.requestAnimationFrame(() => cancelRef.current?.focus());
+    cancelRef.current?.focus();
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !confirmingRef.current) {
         e.preventDefault();
@@ -74,7 +74,6 @@ export const ConfirmDialog = memo(function ConfirmDialog({
     };
     document.addEventListener("keydown", handleKey);
     return () => {
-      window.cancelAnimationFrame(focusFrame);
       document.removeEventListener("keydown", handleKey);
       const previousFocus = previousFocusRef.current;
       if (previousFocus?.isConnected) previousFocus.focus();

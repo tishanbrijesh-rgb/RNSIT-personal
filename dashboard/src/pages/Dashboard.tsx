@@ -13,6 +13,8 @@ import {
 } from "../api/client";
 import type { DashboardSummary, Evaluation, CryptoAsset, ScanJob } from "../types";
 import { RiskBadge } from "../components/RiskBadge";
+import { SkeletonCard, SkeletonTable } from "../components/Skeletons";
+import { useToast } from "../components/Toast";
 import { displayPath, relativeTime, repositoryName } from "../utils/format";
 
 // ── Stagger animation variants ──────────────────────────────────
@@ -548,6 +550,7 @@ const SupportingTrends = memo(function SupportingTrends({
 
 // ── Main Dashboard Component ────────────────────────────────────
 export default function Dashboard() {
+  const { toast } = useToast();
   const [summary, setSummary] = useState<DashboardSummary>();
   const [evaluation, setEvaluation] = useState<Evaluation>();
   const [error, setError] = useState("");
@@ -558,7 +561,10 @@ export default function Dashboard() {
   const scanId = rawScanId && /^\d+$/.test(rawScanId) ? Number(rawScanId) : undefined;
   const [scans, setScans] = useState<ScanJob[]>([]);
   const [attentionAssets, setAttentionAssets] = useState<CryptoAsset[]>([]);
-  const [scanStatusFilter, setScanStatusFilter] = useState<ScanStatusFilter>("all");
+  const [scanStatusFilter, setScanStatusFilter] = useState<ScanStatusFilter>(() => {
+    const value = searchParams.get("scan_status") as ScanStatusFilter | null;
+    return value && SCAN_STATUS_FILTERS.includes(value) ? value : "all";
+  });
   const [scanSearch, setScanSearch] = useState("");
   const [scanningRepo, setScanningRepo] = useState("");
 
@@ -575,12 +581,15 @@ export default function Dashboard() {
         setEvaluation(e);
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) {
+          setError(String(e));
+          toast("Failed to load dashboard: " + String(e), "error");
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [scanId]);
+  }, [scanId, toast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -635,13 +644,13 @@ export default function Dashboard() {
           if (!r) return;
           setScans(r.slice(0, 8));
         });
-      } catch {
-        // silently fail
+      } catch (e) {
+        toast("Scan failed: " + String(e), "error");
       } finally {
         setScanningRepo("");
       }
     },
-    [setScans],
+    [toast, setScans],
   );
 
   const clearScanFilter = useCallback(() => {
@@ -650,13 +659,33 @@ export default function Dashboard() {
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
-  if (error) return <State title="Dashboard unavailable" body={error} />;
+  const changeScanStatusFilter = (value: ScanStatusFilter) => {
+    setScanStatusFilter(value);
+    const next = new URLSearchParams(searchParams);
+    if (value === "all") next.delete("scan_status");
+    else next.set("scan_status", value);
+    setSearchParams(next, { replace: true });
+  };
+
+  if (error)
+    return (
+      <div className="state" role="alert">
+        <span className="spinner" aria-hidden="true" />
+        <h1>Dashboard unavailable</h1>
+        <p>{error}</p>
+      </div>
+    );
   if (!summary)
     return (
-      <State
-        title="Building assurance view"
-        body="Loading inventory, risk, and evidence metrics..."
-      />
+      <div className="dashboard-page" role="status" aria-live="polite">
+        <SkeletonCard />
+        <div style={{ display: "flex", gap: 12 }}>
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <SkeletonTable rows={6} />
+      </div>
     );
   if (!summary.latest_scan_id) {
     if (scanId) {
@@ -752,7 +781,7 @@ export default function Dashboard() {
           </span>
         </Link>
       </nav>
-      {downloadError && (
+      {(downloadError || error) && (
         <div className="callout error" role="alert">
           {downloadError}
         </div>
@@ -771,7 +800,7 @@ export default function Dashboard() {
         <RecentScans
           scans={filteredScans}
           scanStatusFilter={scanStatusFilter}
-          onStatusFilterChange={setScanStatusFilter}
+          onStatusFilterChange={changeScanStatusFilter}
           scanSearch={scanSearch}
           onScanSearchChange={setScanSearch}
           onRescan={handleRescan}

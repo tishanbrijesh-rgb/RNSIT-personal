@@ -254,6 +254,41 @@ export async function getAssets(
   return { items: data.items, total: data.total, risk_counts: data.risk_counts };
 }
 
+export async function exportAssetsCsv(
+  scanJobId: number | undefined,
+  options: {
+    query?: string;
+    risk?: "CRITICAL" | "HIGH" | "MEDIUM" | "LOW";
+    quantum?: boolean;
+    sort?: "priority" | "confidence" | "algorithm";
+    ids?: number[];
+  },
+): Promise<void> {
+  if (options.ids && options.ids.length === 0) throw new Error("Select an asset to export.");
+  const qs = new URLSearchParams();
+  if (scanJobId != null) qs.set("scan_job_id", String(scanJobId));
+  if (options.query?.trim()) qs.set("q", options.query.trim());
+  if (options.risk) qs.set("risk", options.risk);
+  if (options.quantum != null) qs.set("quantum", String(options.quantum));
+  if (options.sort) qs.set("sort", options.sort);
+  options.ids?.forEach((id) => qs.append("ids", String(id)));
+  const response = await authenticatedFetch(`/api/assets.csv?${qs}`);
+  if (!response.ok) throw new Error(`Asset export failed: ${response.status}`);
+  if (!(response.headers.get("Content-Type") || "").toLowerCase().includes("text/csv"))
+    throw new Error("Asset export returned an unexpected file type.");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = options.ids
+    ? `ecdat-selected-${options.ids.length}-assets.csv`
+    : "ecdat-assets.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
 export async function getAsset(id: number): Promise<import("../types").CryptoAsset> {
   return _get(`/api/assets/${id}`);
 }
@@ -319,8 +354,11 @@ export type ScanProgressEvent = {
   status: string;
   collector_stats: Record<string, number | string>;
   assets_found: number;
+  findings_count?: number;
   coverage_pct: number;
   duration_ms: number;
+  started_at?: string | null;
+  finished_at?: string | null;
   in_scope_files?: number;
   scanned_files?: number;
   blind_spots?: string[];
@@ -370,6 +408,7 @@ export function subscribeScanEvents(
         if (event === "message") onEvent(payload);
       }
     }
+    if (!closed) throw new Error("Scan event stream closed before completion");
   })().catch((error: unknown) => {
     if (!closed) onError?.(error instanceof Error ? error : new Error(String(error)));
   });
@@ -399,8 +438,12 @@ export async function getScanDetail(id: number): Promise<import("../types").Scan
 
 export async function getEvidenceGraph(
   scanId?: number,
+  assetId?: number,
 ): Promise<import("../types").EvidenceGraphResponse> {
-  return _get(`/api/evidence-graph${scanId ? `?scan_id=${scanId}` : ""}`);
+  const qs = new URLSearchParams();
+  if (scanId != null) qs.set("scan_id", String(scanId));
+  if (assetId != null) qs.set("asset_id", String(assetId));
+  return _get(`/api/evidence-graph${qs.size ? `?${qs}` : ""}`);
 }
 
 export async function downloadCsv(

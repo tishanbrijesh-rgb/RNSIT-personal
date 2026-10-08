@@ -3,8 +3,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_windows_sih_launcher_uses_private_generated_environment() -> None:
-    launcher = (ROOT / "scripts" / "start_sih.ps1").read_text(encoding="utf-8")
+def test_windows_impactx_launcher_uses_private_generated_environment() -> None:
+    launcher = (ROOT / "scripts" / "start_impactx.ps1").read_text(encoding="utf-8")
 
     assert "ECDAT_DB_PASSWORD" in launcher
     assert "ECDAT_TOKEN_SECRET" in launcher
@@ -14,7 +14,7 @@ def test_windows_sih_launcher_uses_private_generated_environment() -> None:
     assert ".env.*" in (ROOT / ".gitignore").read_text(encoding="utf-8")
 
 
-def test_dashboard_container_has_sih_runtime_hardening() -> None:
+def test_dashboard_container_has_impactx_runtime_hardening() -> None:
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     dashboard = compose.split("  dashboard:", 1)[1].split("\nvolumes:", 1)[0]

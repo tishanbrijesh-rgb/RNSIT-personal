@@ -450,7 +450,7 @@ function AppInner() {
           </ErrorBoundary>
         </Suspense>
       </main>
-      <footer>ECDAT · SIH26164 · Evidence-backed cryptographic discovery assurance</footer>
+      <footer>ECDAT · ImpactX · Evidence-backed cryptographic discovery assurance</footer>
       <ConfirmDialog
         open={confirmLogout}
         title="Sign out?"

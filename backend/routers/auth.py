@@ -1,4 +1,4 @@
-"""Local signed-session endpoint used for the SIH demonstration."""
+"""Local signed-session endpoint used for the ImpactX demonstration."""
 import unicodedata
 
 from fastapi import APIRouter, Depends, Request

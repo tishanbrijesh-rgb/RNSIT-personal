@@ -4,6 +4,8 @@ import { useSearchParams } from "react-router-dom";
 import { downloadReport, getRiskReport, getEvaluation } from "../api/client";
 import type { OutputPagination } from "../api/client";
 import { RiskBadge } from "../components/RiskBadge";
+import { SkeletonPanel, SkeletonTable } from "../components/Skeletons";
+import { useToast } from "../components/Toast";
 import { repositoryName } from "../utils/format";
 import type { RiskLabel } from "../types";
 
@@ -21,6 +23,7 @@ const PRIORITY_FILTERS = [
 type PriorityFilter = (typeof PRIORITY_FILTERS)[number]["key"];
 
 export default function RiskReportPage() {
+  const { toast } = useToast();
   const [params] = useSearchParams();
   const scanId = params.get("scan_id") ? Number(params.get("scan_id")) : undefined;
 
@@ -48,12 +51,15 @@ export default function RiskReportPage() {
         setEvaluation(ev);
       })
       .catch((e) => {
-        if (!cancelled) setError(String(e));
+        if (!cancelled) {
+          setError(String(e));
+          toast("Failed to load risk report: " + String(e), "error");
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [scanId, filter, offset, query]);
+  }, [scanId, filter, offset, query, toast]);
 
   const sorted = useMemo(
     () => [...(report?.migration_priorities ?? [])].sort((a, b) => b.score - a.score),
@@ -79,25 +85,28 @@ export default function RiskReportPage() {
         `ecdat-risk-report-${report.scan_id || "latest"}.csv`,
       );
       setExportedCount(report.pagination?.total ?? sorted.length);
-    } catch {
-      // silently fail
+      toast("Risk report exported as CSV", "success");
+    } catch (e) {
+      toast("Export failed: " + String(e), "error");
     } finally {
       setExporting(false);
     }
-  }, [report, scanId, sorted.length, exporting]);
+  }, [report, scanId, sorted.length, exporting, toast]);
 
-  if (error)
+  if (error && !report)
     return (
-      <div className="callout error" role="alert">
-        {error}
+      <div className="state" role="alert">
+        <span className="spinner" aria-hidden="true" />
+        <h1>Risk report unavailable</h1>
+        <p>{error}</p>
       </div>
     );
   if (!report) {
     return (
-      <div className="state">
-        <span className="spinner" />
-        <h1>Building risk view</h1>
-        <p>Loading migration priorities and coverage data…</p>
+      <div className="dashboard-page" role="status" aria-live="polite">
+        <SkeletonPanel />
+        <SkeletonPanel />
+        <SkeletonTable rows={8} />
       </div>
     );
   }

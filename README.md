@@ -1,13 +1,13 @@
 # ECDAT — Enterprise Cryptographic Discovery & Analysis Tool
 
-Smart India Hackathon 2026 · SIH26164
+ImpactX 2026
 
 ECDAT scans local repositories, detects cryptographic assets (algorithms, certificates, keys), and produces a risk-ranked inventory with PQC migration guidance.
 
 ## Architecture
 
 ```
-ECDAT-SIH/
+ECDAT-ImpactX/
 ├── dashboard/       ← React + Vite frontend (port 3000)
 ├── backend/         ← FastAPI + SQLAlchemy backend (port 8000)
 │   ├── routers/     ← API routes (scan, assets, audit, auth, dashboard, outputs)
@@ -45,35 +45,35 @@ cd dashboard && npm install && npm run dev
 
 Open http://localhost:3000 — sign in with the credentials from `ECDAT_USERS_JSON`.
 
-## SIH Docker launch (Windows)
+## ImpactX Docker launch (Windows)
 
 Prerequisite: Docker Desktop with Docker Compose v2.
 
 ```powershell
 # First launch builds images, creates private demo credentials, migrates PostgreSQL,
 # waits for health checks, and starts the dashboard.
-.\scripts\start_sih.ps1 -Rebuild
+.\scripts\start_impactx.ps1 -Rebuild
 
 # Later launches can reuse the built images and persistent database.
-.\scripts\start_sih.ps1
+.\scripts\start_impactx.ps1
 ```
 
 The first launch prints the generated `admin` password once and stores secrets in the gitignored
-`.env.sih` file. Open http://127.0.0.1:3000. The containerized scanner intentionally sees only
+`.env.impactx` file. Open http://127.0.0.1:3000. The containerized scanner intentionally sees only
 the read-only bundled `test-repo`; use the three fixtures in `demo-repositories/` for native demo
 checks, or explicitly add a read-only Compose mount and allowlisted container path when presenting
 another repository.
 
 ```powershell
 # Stop services without deleting PostgreSQL evidence/history.
-docker compose --env-file .env.sih down
+docker compose --env-file .env.impactx down
 
 # Check service state and readiness.
-docker compose --env-file .env.sih ps
+docker compose --env-file .env.impactx ps
 Invoke-RestMethod http://127.0.0.1:8000/ready
 ```
 
-Do not run `down --volumes` unless you intentionally want to delete the persisted SIH database.
+Do not run `down --volumes` unless you intentionally want to delete the persisted ImpactX database.
 
 ## Environment Variables
 
@@ -132,4 +132,4 @@ cd dashboard && npm run lint && npm run build
 
 ## License
 
-MIT — SIH internal use.
+MIT — ImpactX internal use.

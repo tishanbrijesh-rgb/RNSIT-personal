@@ -140,6 +140,21 @@ class TestScanFixtures:
         assert collecting[-1]["_files_discovered"] == 3
         assert collecting[-1]["_files_supported"] == 3
 
+    def test_worker_reports_correlated_findings_from_real_scan(self, tmp_path: Path):
+        from backend.services.scanner_runner import collect_scan_result
+
+        (tmp_path / "crypto.py").write_text(
+            "from Crypto.PublicKey import RSA\nkey = RSA.generate(2048)\n", encoding="utf-8"
+        )
+        events: list[dict] = []
+        result = collect_scan_result(str(tmp_path), progress_callback=events.append)
+
+        assert any(event.get("_phase") == "indexing" for event in events)
+        assert any(event.get("_phase") == "collecting" for event in events)
+        assert any(event.get("_phase") == "correlating" for event in events)
+        assert events[-1]["_phase"] == "persisting"
+        assert events[-1]["_findings_count"] == len(result["findings"])
+
     def test_unexpected_collector_error_isolated_to_one_file(self, tmp_path: Path):
         """A malformed file must not terminate the repository-wide scan."""
         from scanner.main import _collect_path

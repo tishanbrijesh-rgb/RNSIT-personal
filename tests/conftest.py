@@ -107,6 +107,10 @@ def isolated_client(_isolated_session_factory, monkeypatch):
     # Reset scan control active slot via monkeypatch.
     monkeypatch.setattr(_sc, "_active", None)
 
+    # StaticPool shares one SQLite connection; the watchdog must not commit
+    # concurrently with fixture writes. Reconciliation has dedicated tests.
+    monkeypatch.setattr(_sc, "reconcile_abandoned_scans", lambda: 0)
+
     # Suppress audit writes.
     audit_patcher = pytest.MonkeyPatch()
     audit_patcher.setattr(_sec, "record_audit", lambda *a, **kw: None)

@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -54,11 +55,39 @@ if __name__ == '__main__':
     repo_path = sys.argv[1]
     output_path = Path(sys.argv[2])
     progress_path = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+    supervisor_heartbeat = Path(sys.argv[4]) if len(sys.argv) > 4 else None
+    cancel_signal = Path(sys.argv[5]) if len(sys.argv) > 5 else None
+
+    if supervisor_heartbeat is not None or cancel_signal is not None:
+        def stop_without_supervisor() -> None:
+            # The scanner may spend a long time inside one parser without a
+            # progress callback. This daemon thread is the orphan fail-safe.
+            while True:
+                if cancel_signal is not None and cancel_signal.exists():
+                    os._exit(2)
+                if supervisor_heartbeat is not None:
+                    try:
+                        if time.time() - supervisor_heartbeat.stat().st_mtime > 45:
+                            os._exit(2)
+                    except FileNotFoundError:
+                        os._exit(2)
+                time.sleep(1)
+
+        threading.Thread(target=stop_without_supervisor, daemon=True).start()
 
     def publish_progress(progress: dict) -> None:
+        if cancel_signal is not None and cancel_signal.exists():
+            raise SystemExit("Scan cancelled")
+        if supervisor_heartbeat is not None:
+            try:
+                if time.time() - supervisor_heartbeat.stat().st_mtime > 45:
+                    raise SystemExit("Scan supervisor stopped responding")
+            except FileNotFoundError:
+                raise SystemExit("Scan supervisor stopped responding") from None
         if progress_path is None:
             return
-        _publish_progress(progress_path, progress)
+        if not _publish_progress(progress_path, progress):
+            raise OSError("Unable to publish scan progress")
 
     result = _json_safe(collect_scan_result(repo_path, progress_callback=publish_progress))
     encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

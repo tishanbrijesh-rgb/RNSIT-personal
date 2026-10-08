@@ -1,6 +1,6 @@
 """Empirical calibration dataset � labeled confidence-outcome pairs.
 
-Phase 4 (SIH26164): provides ground-truth labels for confidence calibration,
+Phase 4 (ImpactX): provides ground-truth labels for confidence calibration,
 per-band Brier/ECE breakdown, and drift detection against the shipped
 calibration_params.json baseline.
 

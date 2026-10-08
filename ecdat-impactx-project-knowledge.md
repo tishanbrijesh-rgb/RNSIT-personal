@@ -1,12 +1,12 @@
 # ECDAT project knowledge
 
 Last verified: 2026-09-10
-Repository: `https://github.com/tishanbrijesh-rgb/ECDAT-SIH.git`
+Repository: `https://github.com/tishanbrijesh-rgb/RNSIT-personal.git`
 Active branch: `fix/sha1-recommendation`
 
 ## Purpose
 
-ECDAT is the SIH26164 privacy-first cryptographic discovery and assurance
+ECDAT is the ImpactX privacy-first cryptographic discovery and assurance
 prototype. It scans repositories without executing their code, correlates evidence
 from independent collectors, measures confidence separately from coverage, and
 produces explainable quantum-risk and migration guidance.
@@ -121,11 +121,11 @@ Login: use the account configured in the untracked project-root `.env` file.
 Start commands:
 ```powershell
 # Backend
-cd "C:\Users\Tishan Kumar B\Desktop\SIH\ECDAT-SIH"
+cd "C:\Users\Tishan Kumar B\Desktop\ImpactX\ECDAT-ImpactX"
 .venv\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 # Dashboard
-cd "C:\Users\Tishan Kumar B\Desktop\SIH\ECDAT-SIH"
+cd "C:\Users\Tishan Kumar B\Desktop\ImpactX\ECDAT-ImpactX"
 cd dashboard && npx vite --host 0.0.0.0 --port 3000
 ```
 

@@ -10,7 +10,7 @@ flowchart LR
     Compare --> Metrics[TP · FP · FN]
 ```
 
-Run from the ECDAT-SIH root after installing `req.txt`:
+Run from the ECDAT-ImpactX root after installing `req.txt`:
 
 ```powershell
 git clone --depth 1 --branch 2.2.0 https://github.com/pallets/itsdangerous.git .runtime/benchmarks/itsdangerous

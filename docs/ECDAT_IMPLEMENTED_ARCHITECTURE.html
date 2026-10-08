@@ -60,7 +60,7 @@
   <h1>ECDAT Implemented Architecture</h1>
   <div class="subtitle">End to end frontend backend scanner data and deployment architecture</div>
   <dl>
-    <dt>Repository</dt><dd>ECDAT-SIH</dd>
+    <dt>Repository</dt><dd>ECDAT-ImpactX</dd>
     <dt>Snapshot</dt><dd>20 September 2026</dd>
     <dt>Application</dt><dd>Enterprise Cryptographic Discovery and Analysis Tool</dd>
     <dt>Coverage</dt><dd>Frontend, API, scanner, data model, security, deployment, operations, and verification</dd>
@@ -70,7 +70,7 @@
   <h1>Contents</h1>
   <ol><li><a href="#executive-summary">Executive summary</a></li><li><a href="#1-system-context">1 System context</a></li><li><a href="#2-repository-structure-and-ownership">2 Repository structure and ownership</a></li><li><a href="#3-runtime-topology">3 Runtime topology</a></li><li><a href="#4-frontend-architecture">4 Frontend architecture</a></li><li><a href="#5-backend-application-architecture">5 Backend application architecture</a></li><li><a href="#6-end-to-end-scan-lifecycle">6 End to end scan lifecycle</a></li><li><a href="#7-scanner-architecture">7 Scanner architecture</a></li><li><a href="#8-correlation-confidence-and-risk">8 Correlation confidence and risk</a></li><li><a href="#9-persistence-architecture">9 Persistence architecture</a></li><li><a href="#10-read-models-reports-and-exports">10 Read models reports and exports</a></li><li><a href="#11-progress-observability-and-operations">11 Progress observability and operations</a></li><li><a href="#12-security-architecture">12 Security architecture</a></li><li><a href="#13-configuration-architecture">13 Configuration architecture</a></li><li><a href="#14-build-test-and-release-architecture">14 Build test and release architecture</a></li><li><a href="#15-architectural-constraints-and-extension-points">15 Architectural constraints and extension points</a></li><li><a href="#16-startup-and-shutdown-flow">16 Startup and shutdown flow</a></li><li><a href="#17-source-of-truth-map">17 Source of truth map</a></li><li><a href="#18-architecture-conclusion">18 Architecture conclusion</a></li></ol>
 </section>
-<main><h1 id="ecdat-implemented-architecture">ECDAT Implemented Architecture</h1><p><strong>End to end frontend backend scanner data and deployment architecture</strong><br><strong>Repository:</strong> <code>ECDAT-SIH</code><br><strong>Architecture snapshot:</strong> 20 September 2026<br><strong>System version:</strong> FastAPI application <code>1.0.0</code></p>
+<main><h1 id="ecdat-implemented-architecture">ECDAT Implemented Architecture</h1><p><strong>End to end frontend backend scanner data and deployment architecture</strong><br><strong>Repository:</strong> <code>ECDAT-ImpactX</code><br><strong>Architecture snapshot:</strong> 20 September 2026<br><strong>System version:</strong> FastAPI application <code>1.0.0</code></p>
 <h2 id="executive-summary">Executive summary</h2><p>ECDAT is a local-first cryptographic discovery and assurance platform. A React web console accepts an authenticated repository scan request, a FastAPI control plane validates and durably records it, and a supervised child process scans a read-only local repository. The scanner collects Python AST, multi-language rule, dependency-manifest, and X.509 evidence. The backend correlates that evidence into logical cryptographic operations, computes confidence and post-quantum migration risk, persists the results, and exposes dashboards, inventory, evidence graphs, CBOM, risk reports, evaluation metrics, CSV exports, and live scan progress.</p>
 <p>The implemented system is intentionally bounded. It supports one active scanner worker per API server process, uses a database-backed dispatch record and lease rather than an external message broker, scans paths visible to the backend host, and uses configured HMAC-signed demo sessions rather than enterprise SSO. Local development defaults to SQLite. Docker Compose uses PostgreSQL 16, a FastAPI container, an Nginx-hosted React container, a migration job, and a read-only repository mount.</p>
 <p>This document describes the code that exists in the current working tree. Future architecture described in planning files is not presented as implemented behavior.</p>
@@ -141,7 +141,7 @@
 <td>Unit, integration, contract, accuracy, accessibility, and end-to-end checks</td>
 </tr>
 </tbody></table>
-<h2 id="2-repository-structure-and-ownership">2 Repository structure and ownership</h2><pre class="code-block"><code>ECDAT-SIH/
+<h2 id="2-repository-structure-and-ownership">2 Repository structure and ownership</h2><pre class="code-block"><code>ECDAT-ImpactX/
 ├── dashboard/                 React SPA and Nginx production image
 │   ├── src/App.tsx            Authentication shell and route composition
 │   ├── src/api/client.ts      Session-aware REST, streaming, and downloads

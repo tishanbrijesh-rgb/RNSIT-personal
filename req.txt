@@ -1,4 +1,4 @@
-# ECDAT-SIH Python runtime and API test dependencies.
+# ECDAT-ImpactX Python runtime and API test dependencies.
 # Install from the repository root: python -m pip install -r req.txt
 # The dashboard is installed independently with: npm ci --prefix dashboard
 # Includes API integration tests; detection regressions need no extra packages.

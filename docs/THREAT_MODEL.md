@@ -1,4 +1,4 @@
-# ECDAT SIH threat model
+# ECDAT ImpactX threat model
 
 ## Protected assets
 
@@ -39,7 +39,7 @@ flowchart LR
 | Duplicate worker claim | Database-backed expiring scan lease plus process-local admission |
 | Request tracing | Generated or propagated `X-Request-ID` in structured JSON logs |
 
-## Accepted SIH prototype limitations
+## Accepted ImpactX prototype limitations
 
 - Local demo credentials are operator-provisioned in an untracked environment file.
 - Scan execution uses a supervised child process, but not a hardened OS sandbox.

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback, memo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { getAssets, getDashboardSummary, canWrite } from "../api/client";
+import { getAssets, getDashboardSummary, exportAssetsCsv, canWrite } from "../api/client";
 import { RiskBadge } from "../components/RiskBadge";
 import { displayPath, highlightText } from "../utils/format";
 import type { CryptoAsset, DashboardSummary } from "../types";
@@ -124,6 +124,8 @@ export default function AssetsPage() {
   const [summary, setSummary] = useState<DashboardSummary>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [exportError, setExportError] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -205,81 +207,24 @@ export default function AssetsPage() {
 
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
-  // CSV export (all matching or selected)
-  const buildCsv = (items: CryptoAsset[]): string => {
-    const headers = [
-      "id",
-      "algorithm",
-      "key_size",
-      "category",
-      "priority_label",
-      "priority_score",
-      "confidence",
-      "quantum_vulnerable",
-      "location",
-      "usage",
-      "library",
-      "protocol",
-      "evidence_kind",
-      "pqc_candidate",
-    ];
-    const rows = items.map((a) =>
-      headers
-        .map((h) => {
-          const val = (a as unknown as Record<string, unknown>)[h];
-          if (val === null || val === undefined) return "";
-          if (typeof val === "boolean") return val ? "true" : "false";
-          if (Array.isArray(val)) return `"${val.join("; ")}"`;
-          const s = String(val);
-          return s.includes(",") ? `"${s.replace(/"/g, '""')}"` : s;
-        })
-        .join(","),
-    );
-    return [headers.join(","), ...rows].join("\n");
-  };
-
   const handleExport = async (mode: "all" | "selected") => {
+    if (mode === "selected" && selectedIds.size === 0) return;
+    setExporting(true);
+    setExportError("");
     try {
       const effectiveScanId = scanId ? Number(scanId) : undefined;
-      if (mode === "selected" && selectedIds.size > 0) {
-        const allResult = await getAssets(effectiveScanId, {
-          limit: 10000,
-          offset: 0,
-          query: debouncedQuery,
-          risk: risk === "ALL" ? undefined : risk,
-          quantum: quantum ? true : undefined,
-          sort: sortBy,
-        });
-        const selected = allResult.items.filter((a) => selectedIds.has(a.id));
-        const csv = buildCsv(selected);
-        downloadCsv(csv, `ecdat-selected-${selected.length}-assets.csv`);
-      } else {
-        const result = await getAssets(effectiveScanId, {
-          limit: 10000,
-          offset: 0,
-          query: debouncedQuery,
-          risk: risk === "ALL" ? undefined : risk,
-          quantum: quantum ? true : undefined,
-          sort: sortBy,
-        });
-        const csv = buildCsv(result.items);
-        downloadCsv(csv, `ecdat-assets-${new Date().toISOString().slice(0, 10)}.csv`);
-      }
-    } catch {
-      // silently fail
+      await exportAssetsCsv(effectiveScanId, {
+        query: mode === "all" ? debouncedQuery : undefined,
+        risk: mode === "all" && risk !== "ALL" ? risk : undefined,
+        quantum: mode === "all" && quantum ? true : undefined,
+        sort: sortBy,
+        ids: mode === "selected" ? [...selectedIds] : undefined,
+      });
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Asset export failed.");
+    } finally {
+      setExporting(false);
     }
-  };
-
-  const downloadCsv = (content: string, filename: string) => {
-    const blob = new Blob([content], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
   };
 
   const removeFilter = useCallback((type: "risk" | "quantum" | "query") => {
@@ -328,10 +273,10 @@ export default function AssetsPage() {
           <button
             className="button secondary"
             onClick={() => handleExport("all")}
-            disabled={loading || total === 0}
+            disabled={loading || total === 0 || exporting}
             title="Export all matching assets as CSV"
           >
-            Export CSV
+            {exporting ? "Exporting..." : "Export CSV"}
           </button>
           <div className="view-mode-group" role="group" aria-label="View density">
             <button
@@ -527,6 +472,7 @@ export default function AssetsPage() {
             <button
               className="button secondary"
               onClick={() => handleExport("selected")}
+              disabled={exporting}
               style={{ padding: "6px 12px", fontSize: 12 }}
             >
               Export selected
@@ -541,6 +487,12 @@ export default function AssetsPage() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {exportError && (
+        <div className="callout error" role="alert">
+          {exportError}
+        </div>
+      )}
 
       <section className="toolbar">
         <input
@@ -817,22 +769,14 @@ function PaginationControls({
 }
 
 // ── Confidence Histogram ──────────────────────────────────────────
-const CONFIDENCE_BINS = [
-  { label: "0–20%", min: 0, max: 0.2 },
-  { label: "21–40%", min: 0.2, max: 0.4 },
-  { label: "41–60%", min: 0.4, max: 0.6 },
-  { label: "61–80%", min: 0.6, max: 0.8 },
-  { label: "81–100%", min: 0.8, max: 1.0 },
-];
+const CONFIDENCE_BINS = ["0-20", "21-40", "41-60", "61-80", "81-100"] as const;
 
 const ConfidenceHistogram = memo(function ConfidenceHistogram({
   counts,
 }: {
   counts: Record<string, number>;
 }) {
-  const bins = CONFIDENCE_BINS.map(
-    (bin) => counts[bin.label.replace("%", "").replace("–", "-")] || 0,
-  );
+  const bins = CONFIDENCE_BINS.map((bin) => Number(counts[bin] ?? 0));
 
   const maxCount = Math.max(...bins, 1);
 
@@ -841,13 +785,16 @@ const ConfidenceHistogram = memo(function ConfidenceHistogram({
       <span className="conf-histogram-label">Evidence confidence</span>
       <div className="conf-histogram-bars">
         {CONFIDENCE_BINS.map((bin, i) => (
-          <div key={i} className="conf-histogram-col">
-            <div
-              className="conf-histogram-bar"
-              style={{ height: `${(bins[i] / maxCount) * 100}%` }}
-              title={`${bin.label}: ${bins[i]} asset${bins[i] !== 1 ? "s" : ""}`}
-            />
-            {bins[i] > 0 && <span className="conf-histogram-count">{bins[i]}</span>}
+          <div key={bin} className="conf-histogram-col" aria-label={`${bin}%: ${bins[i]} assets`}>
+            <div className="conf-histogram-plot">
+              <div
+                className={`conf-histogram-bar${bins[i] === 0 ? " conf-histogram-bar--zero" : ""}`}
+                style={{ height: `${(bins[i] / maxCount) * 100}%` }}
+                title={`${bin.replace("-", "–")}%: ${bins[i]} asset${bins[i] !== 1 ? "s" : ""}`}
+              />
+            </div>
+            <span className="conf-histogram-count">{bins[i]}</span>
+            <span className="conf-histogram-range">{bin}%</span>
           </div>
         ))}
       </div>

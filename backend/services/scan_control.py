@@ -31,6 +31,12 @@ from scanner.limits import max_file_bytes, positive_int
 
 logger = get_logger("ecdat.scan_control")
 
+SUPERVISOR_GRACE_SECONDS = 45
+
+
+def _cancel_signal(scan_id: int) -> Path:
+    return Path(__file__).resolve().parents[2] / ".runtime" / f"scan-{scan_id}.cancel"
+
 
 @dataclass
 class Control:
@@ -201,6 +207,7 @@ def dispatch_scan(scan_id: int) -> bool:
         control.version = dispatch.version
         control.durable_claim = True
         job.status = "running"
+        job.started_at = now
         db.commit()
     supervise(repo_path, control)
     return True
@@ -289,7 +296,25 @@ def request_cancel(scan_id: int) -> None:
             dispatch.state = "cancel_requested"
             dispatch.cancellation_requested_at = dispatch.cancellation_requested_at or now
             dispatch.updated_at = now
+            job = db.get(ScanJobDB, scan_id)
+            if job is not None and job.status in {"pending", "queued"}:
+                job.status = "cancelled"
+                job.finished_at = now
+                job.duration_ms = 0
+                job.blind_spots = ["Scan cancelled before execution"]
+                dispatch.state = "cancelled"
             db.commit()
+            if job is not None and job.status == "running":
+                try:
+                    signal_path = _cancel_signal(scan_id)
+                    signal_path.parent.mkdir(parents=True, exist_ok=True)
+                    signal_path.touch()
+                except OSError:
+                    logger.exception("Unable to write worker cancellation signal")
+                try:
+                    reconcile_abandoned_scans()
+                except Exception:
+                    logger.exception("Unable to reconcile scan after cancellation request")
             return
     if not local_signal_sent:
         raise HTTPException(409, 'Scan is not active')
@@ -310,8 +335,16 @@ def _finish_if_active(scan_id: int, status: str, message: str) -> None:
     with SessionLocal() as db:
         job = db.get(ScanJobDB, scan_id)
         if job is not None and job.status in {'pending', 'queued', 'running'}:
+            was_running = job.status == 'running'
             job.status = status
             job.finished_at = datetime.now(timezone.utc)
+            if was_running and job.started_at is not None:
+                started = job.started_at
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                job.duration_ms = max(0, round((job.finished_at - started).total_seconds() * 1000))
+            else:
+                job.duration_ms = 0
             job.blind_spots = [message]
             db.commit()
             logger.info("Scan job finished", extra={"extra_data": {"scan_id": scan_id, "status": status}})
@@ -326,6 +359,60 @@ def worker_command(repo_path: str, result_path: Path, progress_path: Path) -> li
         sys.executable, '-m', 'backend.scan_worker', repo_path,
         str(result_path), str(progress_path),
     ]
+
+
+def reconcile_abandoned_scans(*, now: datetime | None = None) -> int:
+    """Close jobs whose supervisor stopped heartbeating or exceeded its deadline."""
+    from backend.models.scan_lease import ScanLeaseDB
+
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=SUPERVISOR_GRACE_SECONDS)
+    timeout = positive_int('ECDAT_SCAN_TIMEOUT_SECONDS', 300, 3600)
+    count = 0
+    with SessionLocal() as db:
+        active = (
+            db.query(ScanJobDB, ScanDispatchDB)
+            .join(ScanDispatchDB, ScanDispatchDB.scan_job_id == ScanJobDB.id)
+            .filter(ScanJobDB.status == 'running')
+            .all()
+        )
+        for job, dispatch in active:
+            started = job.started_at
+            if started is None:
+                continue
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            heartbeat = dispatch.heartbeat_at
+            if heartbeat is not None and heartbeat.tzinfo is None:
+                heartbeat = heartbeat.replace(tzinfo=timezone.utc)
+            overdue = now - started >= timedelta(seconds=timeout + SUPERVISOR_GRACE_SECONDS)
+            abandoned = heartbeat is None or heartbeat < cutoff
+            if not abandoned:
+                continue
+            status = ('cancelled' if dispatch.cancellation_requested_at is not None
+                      else 'timed_out' if overdue else 'failed')
+            message = ('Scan cancelled; results are incomplete' if status == 'cancelled'
+                       else 'Scan exceeded its time limit; results are incomplete' if status == 'timed_out'
+                       else 'Scan supervisor stopped responding; results are incomplete')
+            # The worker also watches the supervisor heartbeat and cancellation signal.
+            # A stale process must not be allowed to persist a result after this transition.
+            job.status = status
+            job.finished_at = now
+            job.duration_ms = max(0, round((now - started).total_seconds() * 1000))
+            job.blind_spots = [message]
+            dispatch.state = status
+            dispatch.claimed_by = None
+            dispatch.claim_expires_at = None
+            dispatch.updated_at = now
+            for lease in db.query(ScanLeaseDB).filter(
+                ScanLeaseDB.scan_job_id == job.id, ScanLeaseDB.released.is_(False)
+            ):
+                lease.released = True
+                lease.worker_id = ''
+            count += 1
+        if count:
+            db.commit()
+    return count
 
 
 _WORKER_ENV_KEYS = {
@@ -385,8 +472,8 @@ def _persist_worker_progress(scan_id: int, progress_path: Path) -> None:
     allowed = {
         key: value for key, value in progress.items()
         if key in {"ast", "rule", "dep", "cert", "_phase", "_files_discovered",
-                   "_files_supported", "_files_processed", "_files_total"}
-        and ((key == "_phase" and value in {"indexing", "collecting"})
+                   "_files_supported", "_files_processed", "_files_total", "_findings_count"}
+        and ((key == "_phase" and value in {"indexing", "collecting", "correlating", "persisting"})
              or (key != "_phase" and isinstance(value, int) and value >= 0))
     }
     with SessionLocal() as db:
@@ -443,6 +530,10 @@ def supervise(repo_path: str, control: Control) -> None:
             workspace_path = Path(workspace)
             result_path = workspace_path / "result.json"
             progress_path = workspace_path / "progress.json"
+            supervisor_heartbeat = workspace_path / "supervisor.heartbeat"
+            supervisor_heartbeat.touch()
+            cancel_signal = _cancel_signal(control.scan_id)
+            cancel_signal.unlink(missing_ok=True)
             diagnostic_dir = Path(__file__).resolve().parents[2] / ".runtime"
             diagnostic_dir.mkdir(parents=True, exist_ok=True)
             stderr_path = diagnostic_dir / f"scan-worker-{control.scan_id}.stderr.log"
@@ -451,6 +542,7 @@ def supervise(repo_path: str, control: Control) -> None:
             started = time.monotonic()
             heartbeat_interval = max(1.0, min(10.0, control.timeout / 3))
             next_heartbeat = started + heartbeat_interval
+            next_file_heartbeat = started + 2
             popen_kwargs = {
                 "cwd": str(Path(__file__).resolve().parents[2]),
                 "env": worker_environment(workspace_path),
@@ -467,13 +559,17 @@ def supervise(repo_path: str, control: Control) -> None:
                 worker_stderr = stderr_path.open("ab")
                 try:
                     process = subprocess.Popen(
-                        worker_command(repo_path, result_path, progress_path),
+                        worker_command(repo_path, result_path, progress_path)
+                        + [str(supervisor_heartbeat), str(cancel_signal)],
                         stderr=worker_stderr,
                         **popen_kwargs,
                     )
                 finally:
                     worker_stderr.close()
                 while process.poll() is None:
+                    if time.monotonic() >= next_file_heartbeat:
+                        supervisor_heartbeat.touch()
+                        next_file_heartbeat = time.monotonic() + 2
                     if control.cancel.wait(0.05) or (
                         durable_claim and cancellation_requested(control.scan_id)
                     ):
@@ -513,6 +609,12 @@ def supervise(repo_path: str, control: Control) -> None:
                         )
                         continue
                     if process.returncode == 0:
+                        if progress_path.is_file():
+                            try:
+                                _persist_worker_progress(control.scan_id, progress_path)
+                            except Exception:
+                                logger.warning("Unable to persist final scan progress",
+                                               extra={"extra_data": {"scan_id": control.scan_id}})
                         if not result_path.is_file() or result_path.stat().st_size > _worker_result_limit():
                             raise ValueError("Scan worker returned an invalid result artifact")
                         from backend.services.scanner_runner import persist_scan_result
@@ -545,6 +647,7 @@ def supervise(repo_path: str, control: Control) -> None:
                     break
     except Exception:
         # Do not expose command paths, inherited configuration, or source text.
+        logger.exception("Scan worker supervision failed", extra={"extra_data": {"scan_id": control.scan_id}})
         status, message = 'failed', 'Unable to run scan worker; results are incomplete'
     finally:
         try:

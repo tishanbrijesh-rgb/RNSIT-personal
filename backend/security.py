@@ -1,4 +1,4 @@
-"""Signed demo sessions, RBAC, and audit helpers for the local SIH deployment."""
+"""Signed demo sessions, RBAC, and audit helpers for the local ImpactX deployment."""
 from __future__ import annotations
 
 import base64

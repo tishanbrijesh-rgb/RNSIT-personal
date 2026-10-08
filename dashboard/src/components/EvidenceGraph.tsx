@@ -410,3 +410,70 @@ export const EvidenceGraph = memo(function EvidenceGraph({ data, maxNodes = 200 
 });
 
 export default EvidenceGraph;
+
+/** The asset record has direct source edges only; present those edges as readable relationships. */
+export function FocusedEvidenceGraph({ data }: { data: EvidenceGraphResponse }) {
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const asset = data.nodes.find((node) => node.type === "asset");
+  const byId = new Map(data.nodes.map((node) => [node.id, node]));
+  const relationships = asset
+    ? data.edges.flatMap((edge) => {
+        const sourceId =
+          edge.target === asset.id ? edge.source : edge.source === asset.id ? edge.target : null;
+        const source = sourceId ? byId.get(sourceId) : undefined;
+        return source?.type === "evidence" ? [{ source, relation: edge.relation }] : [];
+      })
+    : [];
+  const sourceLabels = [...new Set(relationships.map(({ source }) => source.label))];
+  const visible = relationships.filter(
+    ({ source }) => sourceFilter === "all" || source.label === sourceFilter,
+  );
+
+  if (!asset) return <p className="muted">No asset relationship was returned for this finding.</p>;
+
+  return (
+    <div className="focused-evidence">
+      <div className="focused-evidence-toolbar">
+        <label htmlFor="focused-evidence-filter">Evidence source</label>
+        <select
+          id="focused-evidence-filter"
+          value={sourceFilter}
+          onChange={(event) => setSourceFilter(event.target.value)}
+        >
+          <option value="all">All sources</option>
+          {sourceLabels.map((label) => (
+            <option key={label} value={label}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <span>
+          {visible.length} direct relationship{visible.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="focused-evidence-asset">
+        <span className="eyebrow">Asset finding</span>
+        <strong>{asset.label}</strong>
+      </div>
+      {visible.length > 0 ? (
+        <ul className="focused-evidence-list">
+          {visible.map(({ source, relation }) => (
+            <li key={source.id}>
+              <span className="focused-evidence-relation">{relation.replace(/_/g, " ")}</span>
+              <span className="focused-evidence-source">
+                <span className="eyebrow">Evidence source</span>
+                <strong>{source.label}</strong>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No direct evidence sources match this filter.</p>
+      )}
+      <p className="muted">
+        Each row links this finding to one recorded supporting source. Other findings are shown in
+        the scan inventory.
+      </p>
+    </div>
+  );
+}

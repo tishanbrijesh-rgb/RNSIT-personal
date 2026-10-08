@@ -1,4 +1,4 @@
-# ECDAT-SIH Implementation Plan
+# ECDAT-ImpactX Implementation Plan
 
 Updated: 2026-09-10
 

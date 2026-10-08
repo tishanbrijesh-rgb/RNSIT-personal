@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -64,6 +66,58 @@ def test_enqueue_reuses_active_job_for_the_same_repository() -> None:
         engine.dispose()
 
 
+def test_dispatch_uses_execution_start_for_elapsed_time() -> None:
+    from backend.models.scan_job import ScanJobDB
+    from backend.services import scan_control
+
+    engine, factory = _session_factory()
+    try:
+        with factory() as db:
+            scan_id = scan_control.enqueue_scan(db, "/repo")
+            job = db.get(ScanJobDB, scan_id)
+            job.started_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+            db.commit()
+        control = SimpleNamespace(timeout=300, worker_id="worker-a", version=1, durable_claim=False)
+        before_dispatch = datetime.now(timezone.utc)
+        with (
+            patch.object(scan_control, "SessionLocal", factory),
+            patch.object(scan_control, "reserve", return_value=control),
+            patch.object(scan_control, "claim_dispatch", return_value=True),
+            patch.object(scan_control, "supervise"),
+        ):
+            assert scan_control.dispatch_scan(scan_id)
+        with factory() as db:
+            job = db.get(ScanJobDB, scan_id)
+            assert job.status == "running"
+            assert job.started_at.replace(tzinfo=timezone.utc) >= before_dispatch
+    finally:
+        engine.dispose()
+
+
+def test_cancel_before_execution_has_zero_duration() -> None:
+    from backend.models.scan_job import ScanJobDB
+    from backend.services import scan_control
+
+    engine, factory = _session_factory()
+    try:
+        with factory() as db:
+            scan_id = scan_control.enqueue_scan(db, "/repo")
+            job = db.get(ScanJobDB, scan_id)
+            job.started_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
+            db.commit()
+        with (
+            patch.object(scan_control, "SessionLocal", factory),
+            patch.object(scan_control, "record_audit"),
+        ):
+            scan_control._finish_if_active(scan_id, "cancelled", "Cancelled before execution")
+        with factory() as db:
+            job = db.get(ScanJobDB, scan_id)
+            assert job.status == "cancelled"
+            assert job.duration_ms == 0
+    finally:
+        engine.dispose()
+
+
 def test_post_scan_enqueues_before_process_local_dispatch() -> None:
     from backend.routers import scan
 
@@ -105,17 +159,25 @@ def test_dispatch_claim_is_compare_and_set_across_sessions() -> None:
 
 def test_cancel_request_reaches_remote_worker_through_database() -> None:
     from backend.models.scan_dispatch import ScanDispatchDB
+    from backend.models.scan_job import ScanJobDB
     from backend.services import scan_control
 
     engine, factory = _session_factory()
     try:
         with factory() as db:
             scan_id = scan_control.enqueue_scan(db, "/repo")
+            db.get(ScanJobDB, scan_id).status = "running"
+            dispatch = db.query(ScanDispatchDB).filter_by(scan_job_id=scan_id).one()
+            dispatch.state = "claimed"
+            dispatch.heartbeat_at = datetime.now(timezone.utc)
+            db.commit()
         with (
             patch.object(scan_control, "SessionLocal", factory),
             patch.object(scan_control, "_active", None),
+            patch.object(scan_control, "_cancel_signal") as signal_path,
         ):
             scan_control.request_cancel(scan_id)
+            signal_path.return_value.touch.assert_called_once()
 
         with factory() as db:
             dispatch = db.query(ScanDispatchDB).filter_by(scan_job_id=scan_id).one()
@@ -123,6 +185,92 @@ def test_cancel_request_reaches_remote_worker_through_database() -> None:
             assert dispatch.cancellation_requested_at is not None
     finally:
         engine.dispose()
+
+
+def test_cancel_queued_scan_is_terminal_without_worker() -> None:
+    from backend.models.scan_dispatch import ScanDispatchDB
+    from backend.models.scan_job import ScanJobDB
+    from backend.services import scan_control
+
+    engine, factory = _session_factory()
+    try:
+        with factory() as db:
+            scan_id = scan_control.enqueue_scan(db, "/repo")
+        with patch.object(scan_control, "SessionLocal", factory):
+            scan_control.request_cancel(scan_id)
+        with factory() as db:
+            assert db.get(ScanJobDB, scan_id).status == "cancelled"
+            assert db.query(ScanDispatchDB).filter_by(scan_job_id=scan_id).one().state == "cancelled"
+    finally:
+        engine.dispose()
+
+
+def test_abandoned_cancelled_scan_is_reconciled() -> None:
+    from backend.models.scan_dispatch import ScanDispatchDB
+    from backend.models.scan_job import ScanJobDB
+    from backend.services import scan_control
+
+    engine, factory = _session_factory()
+    now = datetime.now(timezone.utc)
+    try:
+        with factory() as db:
+            scan_id = scan_control.enqueue_scan(db, "/repo")
+            job = db.get(ScanJobDB, scan_id)
+            job.status = "running"
+            job.started_at = now - timedelta(minutes=2)
+            dispatch = db.query(ScanDispatchDB).filter_by(scan_job_id=scan_id).one()
+            dispatch.state = "cancel_requested"
+            dispatch.heartbeat_at = now - timedelta(minutes=1)
+            dispatch.cancellation_requested_at = now - timedelta(seconds=55)
+            db.commit()
+        with patch.object(scan_control, "SessionLocal", factory):
+            assert scan_control.reconcile_abandoned_scans(now=now) == 1
+        with factory() as db:
+            job = db.get(ScanJobDB, scan_id)
+            assert job.status == "cancelled"
+            assert job.finished_at is not None
+            assert job.duration_ms >= 120000
+            assert db.query(ScanDispatchDB).filter_by(scan_job_id=scan_id).one().state == "cancelled"
+    finally:
+        engine.dispose()
+
+
+def test_worker_stops_when_cancel_signal_is_present(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "crypto.py").write_text("from cryptography.hazmat.primitives.asymmetric import rsa\n")
+    heartbeat = tmp_path / "supervisor.heartbeat"
+    heartbeat.touch()
+    cancel = tmp_path / "scan.cancel"
+    cancel.touch()
+    result = tmp_path / "result.json"
+    progress = tmp_path / "progress.json"
+    process = subprocess.run(
+        [sys.executable, "-m", "backend.scan_worker", str(repo), str(result),
+         str(progress), str(heartbeat), str(cancel)],
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert process.returncode != 0
+    assert not result.exists()
+
+
+def test_worker_stops_when_supervisor_heartbeat_disappears(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "crypto.py").write_text("from cryptography.hazmat.primitives.asymmetric import rsa\n")
+    result = tmp_path / "result.json"
+    progress = tmp_path / "progress.json"
+    process = subprocess.run(
+        [sys.executable, "-m", "backend.scan_worker", str(repo), str(result),
+         str(progress), str(tmp_path / "missing.heartbeat"), str(tmp_path / "scan.cancel")],
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert process.returncode != 0
+    assert not result.exists()
 
 
 def test_supervisor_observes_remote_cancellation() -> None:

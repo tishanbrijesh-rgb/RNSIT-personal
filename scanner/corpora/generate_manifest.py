@@ -1,7 +1,7 @@
 import json
 import os
 
-BASE = "/c/Users/Tishan Kumar B/Desktop/SIH/ECDAT-SIH/scanner/corpora"
+BASE = "/c/Users/Tishan Kumar B/Desktop/ImpactX/ECDAT-ImpactX/scanner/corpora"
 
 cases = []
 pos_count = 0

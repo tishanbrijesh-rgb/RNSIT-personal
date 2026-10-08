@@ -10,6 +10,8 @@ vi.mock("../api/client", () => ({
   downloadCsv: vi.fn(),
   getScanDetail: vi.fn(),
   getScans: vi.fn(() => Promise.resolve([])),
+  scanRepo: vi.fn(() => Promise.resolve({ scan_id: 99, status: "queued" })),
+  canWrite: vi.fn(() => true),
 }));
 
 describe("ScanDetailPage", () => {
@@ -28,7 +30,7 @@ describe("ScanDetailPage", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Missing scan");
     await userEvent.click(screen.getByRole("link", { name: "Next scan" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText("Loading scan detail")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("transitions from loading to the scan details", async () => {
@@ -72,7 +74,7 @@ describe("ScanDetailPage", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("Loading scan detail")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
     expect(await screen.findByRole("heading", { name: "Scan #7" })).toBeInTheDocument();
   });
 
@@ -168,5 +170,53 @@ describe("ScanDetailPage", () => {
     expect(screen.getAllByText("361")).toHaveLength(2);
     expect(screen.getByText("720")).toBeInTheDocument();
     expect(screen.getByText(/Coverage does not measure detection accuracy/)).toBeInTheDocument();
+  });
+
+  it("offers a rescan button that reruns the scan", async () => {
+    const { scanRepo } = await import("../api/client");
+    vi.mocked(getScanDetail).mockResolvedValue({
+      id: 7,
+      repo_path: "/repo",
+      status: "completed",
+      started_at: null,
+      finished_at: null,
+      assets_found: 0,
+      avg_confidence: null,
+      total_files: 1,
+      in_scope_files: 1,
+      scanned_files: 1,
+      failed_files: 0,
+      coverage_pct: 100,
+      duration_ms: 10,
+      collector_stats: {},
+      blind_spots: [],
+      assets: [],
+      assets_total: 0,
+      summary: {
+        total_assets: 0,
+        high_risk_count: 0,
+        avg_confidence: 0,
+        coverage_pct: 100,
+        blind_spots: [],
+        risk_distribution: { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 },
+        quantum_vulnerable_count: 0,
+        conflict_count: 0,
+        latest_scan_id: 7,
+        collector_stats: {},
+      },
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/scans/7"]}>
+        <Routes>
+          <Route path="/scans/:id" element={<ScanDetailPage />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const btn = await screen.findByRole("button", { name: /rescan/i });
+    expect(btn).toBeEnabled();
+    await userEvent.click(btn);
+    expect(scanRepo).toHaveBeenCalledWith("/repo");
   });
 });

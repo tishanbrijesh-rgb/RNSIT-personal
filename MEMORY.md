@@ -13,7 +13,7 @@ flowchart LR
 
 ## Repository state
 
-- Remote: `https://github.com/tishanbrijesh-rgb/ECDAT-SIH.git`
+- Remote: `https://github.com/tishanbrijesh-rgb/RNSIT-personal.git`
 - Active branch: `fix/sha1-recommendation`
 - Frontend improvements are intentional project work. Do not revert or overwrite
   them while changing backend, scanner, deployment or database code.

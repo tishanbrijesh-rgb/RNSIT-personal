@@ -141,6 +141,11 @@ def client(session_factory):
     )
     bt_patcher.start()
 
+    # Keep the watchdog off the fixture's single shared SQLite connection.
+    # Dedicated scan admission tests exercise reconciliation directly.
+    watchdog_patcher = patch("backend.services.scan_control.reconcile_abandoned_scans", return_value=0)
+    watchdog_patcher.start()
+
     # Reset scan control active slot.
     orig_active = _sc._active
     _sc._active = None
@@ -154,6 +159,7 @@ def client(session_factory):
         supervise_patcher.stop()
         audit_patcher.stop()
         bt_patcher.stop()
+        watchdog_patcher.stop()
         _rl._allow = orig_allow
         _sc._active = orig_active
         for mod in _MODULES:

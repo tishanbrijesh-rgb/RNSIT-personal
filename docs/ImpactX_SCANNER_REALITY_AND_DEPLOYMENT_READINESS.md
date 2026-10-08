@@ -1,13 +1,13 @@
-# ECDAT Scanner Reality, Competitive Context, and SIH Deployment Readiness
+# ECDAT Scanner Reality, Competitive Context, and ImpactX Deployment Readiness
 
 **Assessment date:** September 21, 2026  
-**Scope:** SIH demonstration readiness, not production certification
+**Scope:** ImpactX demonstration readiness, not production certification
 
 ## Executive verdict
 
-ECDAT is **conditionally ready for an SIH demonstration deployment**. It is not production-ready, and it should not be presented as a complete enterprise cryptographic-discovery platform.
+ECDAT is **conditionally ready for an ImpactX demonstration deployment**. It is not production-ready, and it should not be presented as a complete enterprise cryptographic-discovery platform.
 
-For SIH, the product is credible when positioned as:
+For ImpactX, the product is credible when positioned as:
 
 > A repository-focused cryptographic discovery and migration-prioritization prototype that combines static evidence, dependency and certificate inspection, CBOM output, explainable risk scoring, and a Mosca-style planning scenario.
 
@@ -220,11 +220,11 @@ Recommended priority order:
 8. Never assign dependency presence the same certainty as an observed cryptographic operation.
 9. Publish sample counts and confidence intervals alongside calibration results.
 
-## SIH deployment readiness
+## ImpactX deployment readiness
 
-### Ready for an SIH demonstration
+### Ready for an ImpactX demonstration
 
-The following capabilities are sufficiently credible for a controlled SIH demonstration:
+The following capabilities are sufficiently credible for a controlled ImpactX demonstration:
 
 - Local repository submission
 - Safe bounded static scanning
@@ -241,7 +241,7 @@ The following capabilities are sufficiently credible for a controlled SIH demons
 
 ### Conditions before the demonstration
 
-The deployment should be considered SIH-ready only if all of these conditions are met:
+The deployment should be considered ImpactX-ready only if all of these conditions are met:
 
 - Frontend and backend health checks pass on the demonstration machine.
 - A complete scan of the prepared demonstration repository succeeds before presentation day.
@@ -273,7 +273,7 @@ Production deployment would require, at minimum:
 - Signed releases and software-supply-chain controls
 - Documented retention, privacy and incident-response policies
 
-## Recommended SIH positioning
+## Recommended ImpactX positioning
 
 ### Defensible statement
 
@@ -293,5 +293,5 @@ Production deployment would require, at minimum:
 
 ECDAT contains real scanning logic, real evidence records, a genuine evaluation framework, and a correctly implemented Mosca planning rule. Its supported-file coverage is real within the stated scope, and its frozen-corpus accuracy results are meaningful for that corpus.
 
-Its present confidence percentages are heuristic, and its enterprise discovery surface is much narrower than IBM Quantum Safe Explorer or Keyfactor AgileSec. With accurate positioning, prepared demonstration data, visible limitations and successful health checks, ECDAT is ready for an SIH prototype deployment.
+Its present confidence percentages are heuristic, and its enterprise discovery surface is much narrower than IBM Quantum Safe Explorer or Keyfactor AgileSec. With accurate positioning, prepared demonstration data, visible limitations and successful health checks, ECDAT is ready for an ImpactX prototype deployment.
 

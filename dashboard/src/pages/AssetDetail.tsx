@@ -1,17 +1,17 @@
 // Detailed evidence, Mosca inputs, and use-case-aware migration guidance.
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
-import { getAsset, updateAsset, canWrite } from "../api/client";
+import { getAsset, updateAsset, canWrite, getEvidenceGraph } from "../api/client";
 import { ConfidenceBar } from "../components/ConfidenceBar";
 import { EvidenceChain } from "../components/EvidenceChain";
+import { FocusedEvidenceGraph } from "../components/EvidenceGraph";
 import { RiskBadge } from "../components/RiskBadge";
 import Breadcrumb from "../components/Breadcrumb";
 import { Disclosure } from "../components/Disclosure";
 import { useDirtyGuard } from "../utils/hooks";
-import { buildMoscaScenarios } from "../utils/mosca";
 import Select from "../components/Select";
 import NumberField from "../components/NumberField";
-import type { CryptoAsset, EvidenceEntry } from "../types";
+import type { CryptoAsset, EvidenceEntry, EvidenceGraphResponse } from "../types";
 
 const DEPRECATED_ALGOS = new Set(["MD5", "SHA-1"]);
 
@@ -27,6 +27,8 @@ export default function AssetDetail() {
   const [isDirty, setIsDirty] = useState(false);
   const [scoreUpdated, setScoreUpdated] = useState(false);
   const [prevScore, setPrevScore] = useState<number | null>(null);
+  const [graphData, setGraphData] = useState<EvidenceGraphResponse | null>(null);
+  const [graphLoading, setGraphLoading] = useState(true);
 
   useDirtyGuard(isDirty);
 
@@ -39,6 +41,26 @@ export default function AssetDetail() {
         })
         .catch((e) => setError(String(e)));
   }, [id]);
+
+  useEffect(() => {
+    if (!asset?.scan_job_id) return;
+    let active = true;
+    setGraphLoading(true);
+    setGraphData(null);
+    getEvidenceGraph(asset.scan_job_id, asset.id)
+      .then((g) => {
+        if (active) setGraphData(g);
+      })
+      .catch(() => {
+        if (active) setGraphData(null);
+      })
+      .finally(() => {
+        if (active) setGraphLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [asset?.scan_job_id, asset?.id]);
 
   const change = async (field: string, value: string | number) => {
     if (!asset || !canWrite()) return;
@@ -76,11 +98,6 @@ export default function AssetDetail() {
   const planWindow = asset.data_lifetime_years + asset.migration_time_years;
   const threatGap = planWindow - asset.threat_horizon_years;
   const threatOverlap = asset.quantum_vulnerable && threatGap >= 0;
-  const moscaScenarios = buildMoscaScenarios(
-    asset.data_lifetime_years,
-    asset.migration_time_years,
-    asset.threat_horizon_years,
-  );
   const hasClassicalWeakness = DEPRECATED_ALGOS.has(asset.algorithm);
   const hasQuantumExposure = asset.quantum_vulnerable;
 
@@ -126,27 +143,26 @@ export default function AssetDetail() {
             </span>
           )}
           <span>
-            {hasQuantumExposure ? "Quantum migration required" : "No modeled Shor exposure"}
+            {hasQuantumExposure ? "Quantum-vulnerable algorithm" : "No modeled Shor exposure"}
           </span>
         </div>
       </section>
 
       {asset.conflict && (
         <div className="callout error">
-          <strong>Evidence conflict detected.</strong> Review the operation-level evidence before
-          migration. Multiple sources disagree about this finding.
+          <strong>Evidence conflict detected.</strong> The scanner recorded conflicting operation
+          evidence for this finding. Review the evidence before migration.
         </div>
       )}
 
       {/* Combined overlap callout — only shown when both quantum exposure AND window overlap exist */}
       {threatOverlap && (
         <div className="callout mosca-warning">
-          <strong>Mosca window reaches the threat horizon.</strong> This quantum-vulnerable asset's
-          planning window ({planWindow} years) meets or exceeds the modeled threat horizon (
-          {asset.threat_horizon_years} years).{" "}
-          {threatGap > 0
-            ? `It exceeds the horizon by ${threatGap} years.`
-            : "No migration safety margin remains."}
+          <strong>Modeled migration window overlaps the selected threat horizon.</strong>{" "}
+          {asset.data_lifetime_years} years of required protection plus {asset.migration_time_years}{" "}
+          years to migrate is {planWindow} years, compared with a {asset.threat_horizon_years}-year
+          threat horizon. This is a planning scenario, not a prediction of when a quantum computer
+          will arrive.
         </div>
       )}
 
@@ -185,10 +201,16 @@ export default function AssetDetail() {
                       {({ isOpen, setOpen, buttonId, panelId }) => {
                         const detailText = entry.detail as string | undefined;
                         const componentText = entry.component as string | undefined;
-                        const kindText = entry.kind as string | undefined;
+                        const kindText = (entry.evidence_kind || entry.kind) as string | undefined;
                         const confidenceVal = entry.confidence as number | undefined;
                         const timestampText = entry.timestamp as string | undefined;
                         const sourceText = entry.source as string | undefined;
+                        const recorded = entry.evidence as Record<string, unknown> | undefined;
+                        const span = entry.span as Record<string, unknown> | undefined;
+                        const ruleId = recorded?.rule_id as string | undefined;
+                        const pattern = recorded?.pattern as string | undefined;
+                        const location = entry.location as string | undefined;
+                        const line = span?.line_start as number | undefined;
                         return (
                           <div
                             className="timeline-entry"
@@ -232,9 +254,29 @@ export default function AssetDetail() {
                                     <strong>Component:</strong> {componentText}
                                   </p>
                                 )}
-                                {!detailText && !componentText && (
-                                  <p className="muted">No additional detail recorded.</p>
+                                {ruleId && (
+                                  <p>
+                                    <strong>Rule:</strong> {ruleId}
+                                  </p>
                                 )}
+                                {pattern && (
+                                  <p>
+                                    <strong>Matched pattern:</strong> {pattern}
+                                  </p>
+                                )}
+                                {location && (
+                                  <p>
+                                    <strong>Location:</strong> {location}
+                                    {line !== undefined ? `:${line}` : ""}
+                                  </p>
+                                )}
+                                {!detailText &&
+                                  !componentText &&
+                                  !ruleId &&
+                                  !pattern &&
+                                  !location && (
+                                    <p className="muted">No additional detail recorded.</p>
+                                  )}
                               </div>
                             </div>
                           </div>
@@ -245,6 +287,23 @@ export default function AssetDetail() {
                 )}
               </div>
             </>
+          )}
+        </article>
+
+        <article className="panel graph-panel">
+          <div className="panel-title">
+            <p className="eyebrow">Knowledge graph</p>
+            <h2>Evidence relationships</h2>
+            <p>Direct evidence supporting this finding in scan #{asset.scan_job_id}.</p>
+          </div>
+          {graphLoading ? (
+            <div className="state">
+              <span className="spinner" />
+            </div>
+          ) : graphData && graphData.nodes.length > 0 ? (
+            <FocusedEvidenceGraph data={graphData} />
+          ) : (
+            <p className="muted">No graph data available for this scan.</p>
           )}
         </article>
 
@@ -393,28 +452,14 @@ export default function AssetDetail() {
             <p className="migration-window-result">
               {threatOverlap
                 ? threatGap > 0
-                  ? `Action is overdue by ${threatGap} years.`
-                  : "No migration safety margin remains."
-                : `${Math.abs(threatGap)} years of migration margin remain.`}
+                  ? `The planning window exceeds this modeled horizon by ${threatGap} years.`
+                  : "The planning window equals this modeled horizon."
+                : `${Math.abs(threatGap)} years of modeled margin remain.`}
             </p>
-            <div className="mosca-scenarios" aria-label="Mosca threat-horizon scenarios">
-              {moscaScenarios.map((scenario) => (
-                <section
-                  key={scenario.id}
-                  className={`mosca-scenario${scenario.overlaps ? " is-urgent" : ""}`}
-                >
-                  <strong>{scenario.label}</strong>
-                  <span>
-                    X + Y = {scenario.x + scenario.y}y vs Z = {scenario.z}y
-                  </span>
-                  <small>
-                    {scenario.overlaps
-                      ? `${scenario.gap}y overlap`
-                      : `${Math.abs(scenario.gap)}y margin`}
-                  </small>
-                </section>
-              ))}
-            </div>
+            <p className="muted">
+              Inputs marked Policy default are assumptions recorded with this finding. Set
+              organization-specific values to assess your own timeline.
+            </p>
           </div>
 
           {/* Separated: algorithmic weakness vs quantum exposure */}
@@ -444,8 +489,8 @@ export default function AssetDetail() {
                     {threatOverlap && (
                       <p className="exposure-action">
                         {threatGap > 0
-                          ? `Begin migration now; the modeled window is ${threatGap} years beyond the threat horizon.`
-                          : "No safety margin remains — migration should already be underway."}
+                          ? `Review migration timing; the modeled window exceeds the selected threat horizon by ${threatGap} years.`
+                          : "Review migration timing; the modeled window equals the selected threat horizon."}
                       </p>
                     )}
                   </section>
