@@ -26,6 +26,13 @@ def test_worker_command_includes_progress_artifact(tmp_path: Path) -> None:
     assert command[-3:] == ["/repo", str(result_path), str(progress_path)]
 
 
+def test_worker_runtime_uses_configured_writable_storage(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ECDAT_RUNTIME_DIR", str(tmp_path))
+
+    assert scan_control.runtime_directory() == tmp_path
+    assert scan_control._cancel_signal(37) == tmp_path / "scan-37.cancel"
+
+
 def test_worker_result_normalizes_nested_binary_certificate_values() -> None:
     class CertificateValue:
         def __str__(self) -> str:

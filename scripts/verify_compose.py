@@ -81,7 +81,8 @@ def main():
                     if state['status'] == 'completed':
                         break
                     require(state['status'] in {'queued', 'pending', 'running'},
-                            f"Unexpected scan status: {state['status']}")
+                            f"Unexpected scan status: {state['status']}; "
+                            f"diagnostics: {state.get('blind_spots', [])}")
                     if time.monotonic() >= deadline:
                         raise AssertionError('Docker scan timed out')
                     time.sleep(0.2)

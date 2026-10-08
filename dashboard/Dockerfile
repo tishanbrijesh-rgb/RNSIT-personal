@@ -1,5 +1,5 @@
 # Build the React dashboard without carrying the Node toolchain into production.
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 COPY dashboard/package.json dashboard/package-lock.json ./
 RUN npm ci

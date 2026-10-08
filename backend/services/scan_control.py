@@ -35,7 +35,13 @@ SUPERVISOR_GRACE_SECONDS = 45
 
 
 def _cancel_signal(scan_id: int) -> Path:
-    return Path(__file__).resolve().parents[2] / ".runtime" / f"scan-{scan_id}.cancel"
+    return runtime_directory() / f"scan-{scan_id}.cancel"
+
+
+def runtime_directory() -> Path:
+    """Keep diagnostics and cancellation signals on configured writable storage."""
+    configured = os.getenv("ECDAT_RUNTIME_DIR")
+    return Path(configured) if configured else Path(__file__).resolve().parents[2] / ".runtime"
 
 
 @dataclass
@@ -534,7 +540,7 @@ def supervise(repo_path: str, control: Control) -> None:
             supervisor_heartbeat.touch()
             cancel_signal = _cancel_signal(control.scan_id)
             cancel_signal.unlink(missing_ok=True)
-            diagnostic_dir = Path(__file__).resolve().parents[2] / ".runtime"
+            diagnostic_dir = runtime_directory()
             diagnostic_dir.mkdir(parents=True, exist_ok=True)
             stderr_path = diagnostic_dir / f"scan-worker-{control.scan_id}.stderr.log"
             stderr_path.write_bytes(b"")
