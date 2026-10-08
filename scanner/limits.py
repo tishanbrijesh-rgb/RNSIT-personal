@@ -1,11 +1,15 @@
 """Bound local reads; these limits are not a filesystem security sandbox."""
+import importlib
 import os
 import stat
+from types import ModuleType
+
+resource: ModuleType | None
 
 try:
-    import resource
+    resource = importlib.import_module("resource")
 except ImportError:  # Windows has no stdlib resource module.
-    resource = None  # type: ignore[assignment]
+    resource = None
 
 
 def positive_int(name: str, default: int, maximum: int) -> int:
@@ -49,7 +53,7 @@ def check_memory_budget() -> str | None:
     try:
         if resource is None:
             return None
-        usage = resource.getrusage(resource.RUSAGE_SELF)  # type: ignore[attr-defined]
+        usage = resource.getrusage(resource.RUSAGE_SELF)
         rss_kb = usage.ru_maxrss
         rss_mb = rss_kb / 1024
         if rss_mb > budget:

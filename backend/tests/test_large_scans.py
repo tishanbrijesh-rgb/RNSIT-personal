@@ -213,10 +213,13 @@ class TestScanFixtures:
         assert "unreadable" in failure_reasons
 
     def test_symlink_excluded(self, fixture_with_symlink: Path):
-        """Symlinked files are not double-counted."""
+        """Linked files are inventoried as failures and never scanned twice."""
         from scanner.main import scan_with_metrics
         _, metrics = scan_with_metrics(str(fixture_with_symlink))
-        assert metrics["in_scope_files"] == 1
+        assert metrics["in_scope_files"] == 2
+        assert metrics["scanned_files"] == 1
+        assert metrics["failed_files"] == 1
+        assert {failure["reason"] for failure in metrics["failures"]} == {"linked_file"}
 
     def test_metrics_keys_present(self, small_fixture: Path):
         """Every scan returns all required metric keys."""
