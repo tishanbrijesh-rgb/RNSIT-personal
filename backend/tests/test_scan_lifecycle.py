@@ -24,6 +24,17 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+
+@pytest.fixture(autouse=True)
+def isolate_fake_process_termination():
+    """Lifecycle mocks must never send OS signals using fabricated process IDs.
+
+    Real process-tree termination is covered in test_scan_worker_isolation.
+    """
+    with patch("backend.services.scan_control._terminate_process_tree",
+               side_effect=lambda process: process.kill()):
+        yield
+
 # ── Environment ───────────────────────────────────────────────────────────────
 os.environ.setdefault("ECDAT_ALLOW_ROLE_HEADER", "true")
 os.environ.setdefault(
