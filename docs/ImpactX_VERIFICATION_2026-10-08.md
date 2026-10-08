@@ -24,12 +24,19 @@ Destination: https://github.com/tishanbrijesh-rgb/RNSIT-personal
   connection. Dedicated scan admission tests still exercise reconciliation.
 - Excluded local Serena tooling and caches from Git.
 
-## Deployment limitation
+## GitHub CI follow-up
 
-Docker is available, but the disposable PostgreSQL rehearsal could not be
-completed during verification because registry image downloads were too slow.
-Containerized production deployment is therefore not confirmed by this report.
-Run `python scripts/verify_compose.py` when the required images are available.
+The initial local Docker rehearsal was blocked by slow registry downloads.
+The subsequent GitHub Linux run confirmed the disposable PostgreSQL rehearsal:
+startup, migrations, real scanning, CBOM generation, and persistence after
+backend restart passed. Scanner diagnostics and cancellation signals now use
+writable `/tmp` storage inside the read-only backend container.
+
+CI follow-up also corrected Python 3.11 benchmark compatibility, executable
+script permissions, Node runtime compatibility, platform-specific resource
+typing, linked-file coverage expectations, and a lifecycle test that mocked
+filesystem metadata too broadly. GitHub runs the full checks on every push;
+consult the repository's Actions page for the latest complete result.
 
 Private environment files, credentials, local databases, caches, and build
 outputs are excluded from the upload. Existing project edits and documentation

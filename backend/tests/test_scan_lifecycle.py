@@ -150,6 +150,10 @@ class TestLifecycleSuccessful:
         fake_process = _fake_process(0)
         fake_process.wait.return_value = 0
 
+        def write_result(_repo_path, result_path, _progress_path):
+            result_path.write_text('{"findings":[],"metrics":{}}', encoding="utf-8")
+            return ["python", "-c", "pass"]
+
         with patch("backend.services.scan_control.subprocess") as mock_sub:
             mock_sub.Popen.return_value = fake_process
             mock_sub.DEVNULL = subprocess.DEVNULL
@@ -157,14 +161,9 @@ class TestLifecycleSuccessful:
             control = _dummy_control(1)
 
             with patch("backend.services.scan_control.worker_command",
-                       return_value=["python", "-c", "pass"]), \
-                 patch("backend.services.scan_control.Path.is_file", return_value=True), \
-                 patch("backend.services.scan_control.Path.stat") as result_stat, \
-                 patch("backend.services.scan_control.Path.read_text",
-                       return_value='{"findings":[],"metrics":{}}'), \
+                       side_effect=write_result), \
                  patch("backend.services.scanner_runner.persist_scan_result"), \
                  patch("backend.services.scan_control._finish_if_active") as mock_finish:
-                result_stat.return_value.st_size = 30
                 supervise("/fake/repo", control)
 
         assert mock_finish.called
